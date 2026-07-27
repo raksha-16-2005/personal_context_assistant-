@@ -48,7 +48,8 @@ PIVOT_CONFIG   ?= thread_aware__all-MiniLM-L6-v2
         index-pilot index-all candidates verify validate-eval bench \
         bench-rerank bench-transform bench-rerank-budget export-onnx \
         failures cache-stats cache-clear serve ask extract extract-ceiling \
-        extract-compare route-eval pgvector eval-generation gmail-auth gmail-status
+        extract-compare route-eval pgvector eval-generation gmail-auth gmail-status \
+        check-privacy
 
 help:
 	@grep -E '^[a-z0-9-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -184,3 +185,6 @@ gmail-auth: ## authorise Gmail (repeat weekly - Testing apps get 7-day tokens)
 
 gmail-status: ## how long until the Gmail token needs re-authorising
 	$(PY) scripts/gmail_auth.py --status
+
+check-privacy: ## refuse to publish anything derived from private mail
+	$(PY) scripts/check_privacy.py

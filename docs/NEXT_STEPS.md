@@ -2,10 +2,19 @@
 
 Last updated: 27 July 2026
 
-**Week 0 is ~85% done. Week 2's code is now written; weeks 1, 3–5 still need
-compute or new modules.** The foundation and dimensions 4–6 are built and tested
-(206 tests). What remains is the human labelling step, compute time, and the
-extraction/router/generation modules.
+**Every module in the plan is now written. What remains is labels, compute, and
+two human setup steps.** 458 tests, and they pass with torch and transformers
+blocked so CI can run them without the pinned stack.
+
+Nothing left on this list is blocked on code that does not exist:
+
+| Blocked on | Items |
+|---|---|
+| `make verify` — ~1 h of human labelling | every quality table (dimensions 3–6, router accuracy, refusal rate) |
+| `brew install ollama` | the extraction run, and the router's SQL arm having any data |
+| a Kaggle account | 5 of 6 indices (~5 min on a T4 vs ~7.3 h locally) |
+| hand-labelling 50 answers | Cohen's κ, without which judge scores are one model's opinion of another's |
+| unattended machine time | the full 214k index, the overnight extraction pass |
 
 ---
 

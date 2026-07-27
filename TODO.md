@@ -138,22 +138,31 @@ this is more rigorous than hiding it. Reported carelessly it is dishonest.
 
 - [ ] **`[you]`** `brew install ollama && ollama pull qwen2.5:3b`
       *(CPU-only here, ~25 s/message)*
-- [ ] **`[me]`** `commitments` table schema + migration
-- [ ] **`[me]`** Extraction prompts + **relative-date resolution** — "next
-      Thursday" sent on a Tuesday → absolute UTC. Top source of silent
-      wrongness; gets its own accuracy metric.
+- [x] **`[me]`** `commitments` table schema + migration (`extraction/schema.py`, DDL + partial index on `due_at`)
+- [x] **`[me]`** Extraction prompts + **relative-date resolution**
+      (`extraction/dates.py`, `extraction/extract.py`). The model quotes the
+      deadline phrase verbatim and **Python does the arithmetic** — LLMs are
+      unreliable at date maths and the error has to be recomputed to be caught, so
+      resolving in code makes the metric measure language understanding instead.
+      "next Thursday" is reported **ambiguous** with its alternative reading
+      attached: US usage does not converge, and scoring it strictly would measure
+      the annotator's convention. Also built: a recall-tuned pre-filter, so most
+      messages never reach the 25 s/message model.
 - [ ] **`[compute]`** Run Qwen 2.5 3B over the ~2–3k messages the temporal and
       entity queries touch · **overnight**
 - [ ] **`[me]`** Run Claude Haiku 4.5 as the quality ceiling · **~$3, batched**
-- [ ] **`[me]`** Date-accuracy metric, local vs ceiling
-- [ ] **`[me]`** `router/` — temporal/aggregate → SQL, semantic → hybrid,
-      ambiguous → both and merge. `pipeline.py` is where it plugs in: `search()`
-      currently always takes the hybrid path, and the router decides that instead.
+- [x] **`[me]`** Date-accuracy metric, local vs ceiling (`extraction/metrics.py`: exact / within-1d / either-reading, plus arm agreement). `make extract-compare`
+- [x] **`[me]`** `router/` — temporal/aggregate → SQL, semantic → hybrid,
+      ambiguous → both. Rules first (free, deterministic, reproducible), model
+      only on abstention, and abstention resolves to `both`: routing a date
+      question to search gives a wrong answer, answering both ways is merely
+      slower. Wired into `pipeline.py`; a pure-SQL question now skips retrieval
+      entirely.
 - [ ] **`[me]`** Router accuracy table + end-to-end quality **per query class**
       (this is the headline result)
-- [ ] **`[me]`** `scripts/load_pgvector.py` — `index/store.py` exists but
-      nothing calls it yet
-- [ ] **`[me]`** Measure HNSW recall loss against the exact baseline
+- [x] **`[me]`** `scripts/load_pgvector.py` — `index/store.py` had existed
+      since week 0 with no caller. `make pgvector`
+- [x] **`[me]`** Measure HNSW recall loss against the exact baseline — an `ef_search` sweep against exact rankings over the eval queries. Recall here means *agreement with exact search*, not relevance.
 
 ## Phase 5 — generation eval
 
@@ -167,12 +176,12 @@ this is more rigorous than hiding it. Reported carelessly it is dishonest.
       over it. `http.server` and one self-contained HTML page, no new
       dependencies: Gradio and Streamlit both need newer `huggingface_hub` and
       `pydantic` than the Intel-macOS torch pin tolerates.
-- [ ] **`[me]`** Groundedness / faithfulness metric
-- [ ] **`[me]`** Citation accuracy metric
+- [x] **`[me]`** Groundedness / faithfulness metric (`generation/judge.py`), judged per claim against its own cited sources
+- [x] **`[me]`** Citation accuracy metric — distinct from groundedness: an answer can be grounded in the context while attributing every claim to the wrong source
 - [ ] **`[me]`** Refusal rate on the 10 unanswerable controls
-- [ ] **`[me]`** Answer relevance metric
+- [x] **`[me]`** Answer relevance metric
 - [ ] **`[you]`** Hand-label 50 answers for judge calibration · **~1 h**
-- [ ] **`[me]`** Cohen's κ, judge vs human
+- [x] **`[me]`** Cohen's κ, judge vs human (`cohens_kappa`). Chance-corrected deliberately: a judge that says "supported" to everything scores 85% raw agreement on an 85%-supported set and κ≈0. Every report prints **uncalibrated** until hand labels exist.
 
 ## Phase 6 — ship
 
@@ -181,9 +190,13 @@ this is more rigorous than hiding it. Reported carelessly it is dishonest.
       `data/onnx` and `.venv` are all excluded — 64 files, source and docs only.
 - [ ] **`[compute]`** Build the full 214k-message index for the winning config
       so the "500k emails" claim is honest · **overnight**
-- [ ] **`[me]`** GitHub Actions CI — tests + `validate-eval` on push
-- [ ] **`[me]`** HF Space demo. **ZeroGPU path only** — plain CPU Gradio Spaces
-      are no longer free; free personal accounts get 2 ZeroGPU Spaces.
+- [x] **`[me]`** GitHub Actions CI — tests + `validate-eval` on push, plus a guard against committed data or secrets. Runs without the corpus and without torch: `index/embed.py`'s import is now lazy so the suite is importable, and all 458 tests pass with torch/transformers blocked.
+- [x] **`[me]`** HF Space demo, ZeroGPU path (`spaces/`). Gradio here and
+      stdlib `http.server` locally, because the Intel-macOS torch pin cannot
+      tolerate Gradio's `huggingface_hub`/`pydantic` floors — a Space is a fresh
+      environment where the pin does not apply. `check_public_corpus()` refuses to
+      start unless Enron senders are present, so a private index cannot be served
+      by accident.
 - [ ] **`[me]`** README with every table filled in, numbers before prose
 - [ ] **`[me]`** EVALUATION.md results sections
 - [ ] **`[you/me]`** One writeup on the router or chunking finding
@@ -223,25 +236,36 @@ a default.
       covers basic profile scopes — not Gmail. So personal use means
       re-authorising weekly. Escaping that needs Google app verification, which
       for a Gmail scope means a security review.
-- [ ] **`[me]`** `corpus/gmail.py` — OAuth flow, token cache, `messages.list` +
-      batched `messages.get`, raw RFC822 → the same `Message` dataclass
-- [ ] **`[me]`** Incremental sync via `historyId` so a re-run fetches only what
-      is new instead of re-downloading the mailbox
+- [x] **`[me]`** `corpus/gmail.py` — OAuth flow, token cache, `messages.list`,
+      raw RFC822 → the same `Message` dataclass. `parse_message()` was extracted
+      from `parse_file()` so both corpora genuinely share one parser: verified
+      byte-identical dedup keys over real maildir messages. Tokens live in
+      `~/.config/emailrag/` at mode 0600 — outside the repo, because `.gitignore`
+      is a convention and one `git add -f` defeats it.
+- [x] **`[me]`** Incremental sync via `historyId`. An expired cursor (Google
+      keeps ~a week) falls back to a full sync as a normal event, not an error, and
+      the cursor is read *before* fetching so messages arriving mid-sync are picked
+      up next time rather than skipped.
 - [ ] **`[me]`** Reuse the existing dedup + bulk filter unchanged, then
       **re-measure the bulk rate** — Enron's was 14.2%, modern Gmail will be far
       higher, and that number is worth reporting as a contrast
 - [ ] **`[compute]`** Build one index with the config that won the ablation ·
       **~5–100 min depending on mailbox size**
-- [ ] **`[me]`** Commitment pre-filter (date/deadline regex) + extraction scoped
-      to a `--since` window
+- [x] **`[me]`** Commitment pre-filter (`dates.looks_like_commitment`) +
+      `--since` scoping. Tuned for recall: a false positive costs 25 s of CPU, a
+      false negative loses a commitment permanently and invisibly.
 - [ ] **`[compute]`** Extract commitments over the recent window · **overnight**
 - [x] **`[me]`** Local CLI or small local web UI for actual daily use — search
       and cited answer are built (`make serve`, `make ask`). Still missing:
       "what's due this week", which needs the router and extraction. The server
       binds to 127.0.0.1 and the bind address is deliberately not a flag.
-- [ ] **`[me]`** Keep the private index out of git and off Hugging Face. The
-      public demo stays Enron-only; `.gitignore` already covers `data/`, but
-      verify before the first push.
+- [x] **`[me]`** Keep the private index out of git and off Hugging Face —
+      `scripts/check_privacy.py`, runnable as a pre-push hook. `.gitignore` is a
+      convention: `git add -f` defeats it and a moved path escapes it, so this
+      checks for the artifacts themselves (corpora, vectors, tokens, LLM caches,
+      Gmail paths, OAuth secrets in tracked content) and asserts any Space payload
+      carries the Enron corpus. Verified it both passes clean and refuses a planted
+      violation.
 
 ---
 
