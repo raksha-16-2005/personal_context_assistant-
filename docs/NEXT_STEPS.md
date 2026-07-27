@@ -95,19 +95,25 @@ nothing is labelled yet; the latency columns are already measured.
   were there, ranked low anyway — expansion cannot help). `bad_label` is only
   ever set by hand.
 
-### Week 3 — extraction and the router  ·  all new code
+### Week 3 — extraction and the router  ·  code written, needs Ollama
 
-- **Prerequisite:** `brew install ollama && ollama pull qwen2.5:3b`. Not
-  installed. CPU-only on this machine, ~25 s/message — scope to the ~2–3k
-  messages the temporal and entity queries touch, run overnight.
-- **`extraction/`** — commitments schema, prompts, relative-date resolution
-  (the metric that matters: "next Thursday" sent on a Tuesday → absolute UTC).
-  Two models: Qwen 2.5 3B local vs Claude Haiku 4.5 as the ceiling (~$3).
-- **`router/`** — classify temporal/aggregate → SQL, semantic → hybrid,
-  ambiguous → both. Report router accuracy *and* end-to-end quality per class.
-- **`scripts/load_pgvector.py`** — `index/store.py` exists but nothing calls
-  it. Needed for the served system and to measure HNSW recall loss against the
-  exact baseline.
+- **Prerequisite, and the only blocker:** `brew install ollama && ollama pull
+  qwen2.5:3b`. CPU-only here at ~25 s/message, so `make extract` scopes to the
+  threads the temporal and entity queries touch and the pre-filter drops most of
+  even that. Until this runs, the router's SQL arm has no data — and it says so
+  rather than reporting "nothing is due".
+- **`extraction/`** — built. The design point: the model quotes the deadline
+  phrase verbatim and **Python does the arithmetic**, because LLMs are unreliable
+  at date maths and the error has to be recomputed to be caught. "next Thursday"
+  is reported *ambiguous* with its alternative reading attached, since US usage
+  does not converge and strict scoring would measure the annotator's convention.
+- **`router/`** — built. Rules first (free, deterministic), model only on
+  abstention, and abstention resolves to `both`: routing a date question to search
+  gives a wrong answer, answering both ways is merely slower. `make route-eval`
+  needs labels; the rules alone can be inspected with `--no-llm`.
+- **`scripts/load_pgvector.py`** — built. `make pgvector` loads the pivot index
+  and sweeps `ef_search` against the exact rankings, which turns HNSW recall loss
+  from a hidden confound into a reported number. Needs Postgres running.
 
 ### Week 4 — generation  ·  synthesis built, measurement not
 
@@ -132,12 +138,18 @@ markers are validated against the sources supplied, and uncited assertions are
 flagged. They catch only what is visible without reading the sources, which is
 exactly why the judge work is still on this list.
 
-### Week 5 — ship
+### Week 5 — ship  ·  demo and CI built, tables need labels
 
-- HF Space demo. **Must use the ZeroGPU path** — plain CPU Gradio Spaces are no
-  longer free; free personal accounts get 2 ZeroGPU Spaces.
-- README with all tables, EVALUATION.md results sections filled in.
-- One writeup on the router or chunking finding.
+- **HF Space demo** — built (`spaces/`), ZeroGPU path. Gradio there and stdlib
+  `http.server` locally, because the Intel-macOS torch pin cannot tolerate
+  Gradio's dependency floors. `check_public_corpus()` refuses to start unless
+  Enron senders are present, so a private index cannot be served by accident.
+- **CI** — built (`.github/workflows/ci.yml`). Tests plus eval-set validation,
+  with no corpus and no keys; `index/embed.py`'s torch import is now lazy so the
+  suite is importable without the pinned stack.
+- **Privacy guard** — `make check-privacy`, meant as a pre-push hook.
+- Still open: README and EVALUATION.md results sections, and one writeup. All
+  three need numbers, which need labels.
 
 ---
 
