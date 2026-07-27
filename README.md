@@ -10,6 +10,45 @@ tables can be checked independently.
 > lands. Empty cells are honest — nothing here is a placeholder for a number
 > that was assumed.
 
+## Try it
+
+```bash
+make serve     # http://127.0.0.1:8000
+make ask Q="what was decided about the confidentiality agreement"
+```
+
+Ask a question, get an answer built only from retrieved emails, with every claim
+carrying a clickable citation back to the message it came from. Retrieval is
+hybrid (dense + BM25, reciprocal-rank fusion) with a cross-encoder rerank.
+
+Measured on the pilot index (58k chunks over 50k messages), warm:
+
+| stage | ms |
+|---|---|
+| retrieval (dense + BM25 + RRF) | ~20 |
+| rerank (L-2 cross-encoder, top-20, 192 tok) | ~300 |
+| generation (Gemini 2.5 Flash, 6 sources) | ~2,200 |
+| **cached re-ask** | **~330** |
+
+The two behaviours worth checking yourself:
+
+**It refuses.** Asked *"who won the 2030 world cup"* it returns
+`INSUFFICIENT_CONTEXT` — even though retrieval does surface soccer newsletters as
+distractors. Asked *"what is the capital of France"* it answered *"Paris is a city
+in France [5]. The excerpts do not explicitly state that Paris is the capital of
+France."* — declining to fill the gap from its own weights, which is the whole
+point.
+
+**It distinguishes.** Asked about "the confidentiality agreement" over a corpus
+containing dozens, it separates four different ones and cites each.
+
+The UI is `http.server` from the standard library and a single self-contained HTML
+page — no new dependencies. That is deliberate: `requirements.txt` is pinned to
+the last torch/transformers combination that works on Intel macOS, and both Gradio
+and Streamlit require newer `huggingface_hub` and `pydantic` than that stack
+tolerates. The public ZeroGPU Space in phase 6 is where Gradio belongs, in a fresh
+environment where the pin does not apply.
+
 ## Results
 
 ### Dimension 1 — Chunking
@@ -90,9 +129,29 @@ worklist with the evidence for each. Counts land here once the eval set exists.
 `bad_label` is the one category never assigned automatically — a system that can
 file its own failures as mislabelled is grading its own exam.
 
-### Router, generation eval
+### Generation
 
-Not yet run. See [the plan](plan.html).
+Answer synthesis with citations is **built and working** (`make serve`,
+`make ask`). What is not yet built is the *measurement* of it:
+
+| Metric | status |
+|---|---|
+| Refusal rate on the 10 unanswerable controls | needs the labelled eval set |
+| Groundedness / faithfulness | needs a judge (`generation/judge.py`) |
+| Citation accuracy | needs a judge |
+| Answer relevance | needs a judge |
+| Cohen's κ, judge vs 50 hand-labelled answers | needs the hand labels |
+
+Two structural checks run on every answer today, without a judge: citation
+markers are validated against the sources actually supplied, so a fabricated
+`[7]` is surfaced instead of rendered as a working link; and sentences that
+assert something without citing anything are flagged. Neither is a substitute for
+a groundedness metric — they only catch the failures visible without reading the
+sources.
+
+### Router
+
+Not yet built. See [the plan](plan.html).
 
 ## Design decisions worth arguing with
 
@@ -242,10 +301,20 @@ src/emailrag/
   chunking/   the four chunking strategies
   index/      dense (exact), sparse (BM25), fusion, reranking, pgvector store
   query/      dimension-5 transforms (HyDE, multi-query, decomposition)
+  generation/ answer synthesis with validated citations
   evaluation/ IR metrics, eval-set schema, ablation harness, failure taxonomy
   llm/        provider-agnostic client + on-disk response cache
-scripts/      pipeline entry points
+  ui/         the single-page local UI
+  pipeline.py the assembled system: question -> cited answer
+scripts/      pipeline entry points (ask.py, serve.py, run_ablation.py, …)
 notebooks/    Kaggle GPU embedding notebook
 docs/         CORPUS.md, EVALUATION.md, HARDWARE.md, NEXT_STEPS.md
 data/eval/    the published eval set
 ```
+
+`evaluation/harness.py` and `pipeline.py` are deliberately separate. The harness
+runs 80 queries through many configurations and reports metrics; it holds no
+message metadata because metrics never need it. The pipeline runs one question
+through one configuration and must produce something a person can read — sender,
+date, subject, excerpt. They share every component, so the configuration that
+wins the ablation is the configuration the UI serves.

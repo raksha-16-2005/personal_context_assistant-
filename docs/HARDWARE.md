@@ -82,6 +82,56 @@ Cross-encoder rerank latency, per query:
 
 Reproduce with `make bench-hardware`.
 
+### Rerank latency is dominated by passage length
+
+Attention is superlinear in sequence length, so a rerank latency figure is
+meaningless without the passage length it was measured at. Median ms/query,
+`make bench-rerank-budget` (`runs/rerank_budget.json`):
+
+| Model | tokens | top-10 | top-20 | top-50 |
+|---|---|---|---|---|
+| MiniLM-L-6-v2 | 128 | **117** | 247 | 607 |
+| MiniLM-L-6-v2 | 192 | **190** | 381 | 967 |
+| MiniLM-L-6-v2 | 300 | 310 | 628 | 1578 |
+| MiniLM-L-6-v2 | 512 | 527 | 1087 | 2730 |
+| MiniLM-L-4-v2 | 128 | **68** | **177** | 403 |
+| MiniLM-L-4-v2 | 300 | 262 | 447 | 1138 |
+| MiniLM-L-2-v2 | 128 | **53** | **84** | 215 |
+| MiniLM-L-2-v2 | 192 | **70** | **158** | 388 |
+| MiniLM-L-2-v2 | 300 | **128** | 228 | 728 |
+| MiniLM-L-2-v2 | 512 | 202 | 433 | 1006 |
+
+Bold is inside the 200 ms shipped-path budget. The pilot index's mean chunk is
+299.7 tokens, so the 300-token row is the realistic one.
+
+Truncation is a better lever than depth: it is 2–5× and, unlike lowering *k*, it
+does not shrink the candidate set — every chunk still gets scored, just on less of
+itself. Whether the discarded tail mattered is a quality question, and
+`make bench-rerank` is where it gets answered.
+
+### int8 ONNX does not help here, and the reason is the instruction set
+
+Dynamic int8 quantization of MiniLM-L-6 (`make export-onnx`) produces a sound
+export — 91 MB → 23 MB, Spearman ρ=0.984 against fp32, top-5 overlap 5/5 — that
+is nonetheless **slower than torch fp32 at realistic passage length**:
+
+| top-20, 300-token passages | ms |
+|---|---|
+| torch fp32 | 644 |
+| onnxruntime fp32 | 796 |
+| onnxruntime int8 (avx2, dynamic) | 745 |
+
+Checked across `intra_op_num_threads` 1/4/6/12, so it is not a threading
+artifact; 6 is optimal and is what the table reports. This CPU is Coffee Lake —
+AVX2, no AVX-512 VNNI — so the per-batch activation quantize/dequantize overhead
+is never repaid by the integer kernels. The overhead scales with activation size,
+which is why the same export looks like a 1.6× win on 30-token passages and a
+loss on 300-token ones.
+
+**This is a finding about this machine, not about quantization.** On a VNNI-capable
+CPU the conclusion would likely reverse. The measurement, not the folklore, is
+what selected the shipped arm.
+
 ## What those numbers changed in the plan
 
 **Ablations run on a 50k-message stratified subsample, not the full corpus.**
@@ -100,9 +150,20 @@ cheap model, then 2 more models against the winning chunking - is 6 builds and
 ("six dimensions, each varied independently"); a grid would additionally report
 interaction effects that 70 answerable queries cannot resolve.
 
-**Shipped rerank is top-20 with MiniLM + ONNX int8, not top-50 with
-bge-reranker-base.** 6.8 s/query is not a shippable latency. bge-reranker-base
-stays in the ablation as an offline quality ceiling.
+**Shipped rerank is top-20 with a 2-layer MiniLM over 192-token passages — not
+MiniLM-L-6 + ONNX int8, and not top-50 bge-reranker-base.** 6.8 s/query was never
+shippable, so bge-reranker-base stays in the ablation as an offline quality
+ceiling. The int8 route the plan assumed would rescue MiniLM-L-6 does not work on
+this CPU (above), and MiniLM-L-6 at the corpus's real chunk length is 628 ms —
+3× over budget. Truncating passages to 192 tokens and dropping to 2 layers gets
+to 158 ms. Whether that costs quality is `make bench-rerank`'s job; the latency
+constraint only says which arms are eligible.
+
+**Embedding can be offloaded to a free GPU; latency cannot.** Six index builds
+are ~7.3 h here and ~5 min on a Kaggle T4. Quality metrics are hardware-
+independent, so they may be computed there; latency is not, so it is measured
+only here and every imported config carries `embed_platform` to keep the two from
+being mixed in one table.
 
 **Extraction is scoped to the threads the temporal and entity-scoped eval
 queries touch (~2-3k messages), not the whole corpus.** Ollama has no GPU

@@ -9,6 +9,11 @@ Times are measured or projected on this machine — see
 
 ## Phase 0 — finish the eval set (blocks literally everything)
 
+**This is still the only thing standing between the repo and its first real
+table.** Dimensions 4, 5 and 6 are now built and tested; their quality columns
+are empty solely because nothing is labelled. `make verify` is the highest-value
+hour available.
+
 - [ ] **`[you]`** `make verify` — label the 24 drafted candidates · **~1 h**
       Skip the 3 broken temporal ones (they float against a "now" the corpus
       lacks; already fixed for the next batch via `as_of`).
@@ -142,7 +147,8 @@ this is more rigorous than hiding it. Reported carelessly it is dishonest.
 - [ ] **`[me]`** Run Claude Haiku 4.5 as the quality ceiling · **~$3, batched**
 - [ ] **`[me]`** Date-accuracy metric, local vs ceiling
 - [ ] **`[me]`** `router/` — temporal/aggregate → SQL, semantic → hybrid,
-      ambiguous → both and merge
+      ambiguous → both and merge. `pipeline.py` is where it plugs in: `search()`
+      currently always takes the hybrid path, and the router decides that instead.
 - [ ] **`[me]`** Router accuracy table + end-to-end quality **per query class**
       (this is the headline result)
 - [ ] **`[me]`** `scripts/load_pgvector.py` — `index/store.py` exists but
@@ -151,8 +157,16 @@ this is more rigorous than hiding it. Reported carelessly it is dishonest.
 
 ## Phase 5 — generation eval
 
-- [ ] **`[me]`** `generation/` — answer synthesis with citations.
-      **Does not exist at all**; everything so far stops at retrieval.
+- [x] **`[me]`** `generation/` — answer synthesis with citations. Built and
+      working end to end: `make ask Q="..."` and `make serve`. Refusal is a
+      machine-checkable sentinel (`INSUFFICIENT_CONTEXT`) rather than
+      pattern-matched prose, citations are validated against the sources actually
+      supplied, and sources are messages rather than chunks so a citation points
+      at something a person can open.
+- [x] **`[me]`** `pipeline.py` + `ui/` — the assembled system and a local web UI
+      over it. `http.server` and one self-contained HTML page, no new
+      dependencies: Gradio and Streamlit both need newer `huggingface_hub` and
+      `pydantic` than the Intel-macOS torch pin tolerates.
 - [ ] **`[me]`** Groundedness / faithfulness metric
 - [ ] **`[me]`** Citation accuracy metric
 - [ ] **`[me]`** Refusal rate on the 10 unanswerable controls
@@ -162,8 +176,9 @@ this is more rigorous than hiding it. Reported carelessly it is dishonest.
 
 ## Phase 6 — ship
 
-- [ ] **`[me]`** `git init`, first commit — **the repo is not under version
-      control yet**
+- [x] **`[me]`** `git init`, first commit. Verified before committing that
+      `.env`, `data/raw`, `data/interim`, `data/index`, `data/llm_cache`,
+      `data/onnx` and `.venv` are all excluded — 64 files, source and docs only.
 - [ ] **`[compute]`** Build the full 214k-message index for the winning config
       so the "500k emails" claim is honest · **overnight**
 - [ ] **`[me]`** GitHub Actions CI — tests + `validate-eval` on push
@@ -220,8 +235,10 @@ a default.
 - [ ] **`[me]`** Commitment pre-filter (date/deadline regex) + extraction scoped
       to a `--since` window
 - [ ] **`[compute]`** Extract commitments over the recent window · **overnight**
-- [ ] **`[me]`** Local CLI or small local web UI for actual daily use — search,
-      cited answer, and "what's due this week" via the router
+- [x] **`[me]`** Local CLI or small local web UI for actual daily use — search
+      and cited answer are built (`make serve`, `make ask`). Still missing:
+      "what's due this week", which needs the router and extraction. The server
+      binds to 127.0.0.1 and the bind address is deliberately not a flag.
 - [ ] **`[me]`** Keep the private index out of git and off Hugging Face. The
       public demo stays Enron-only; `.gitignore` already covers `data/`, but
       verify before the first push.

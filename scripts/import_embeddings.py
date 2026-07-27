@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 import time
 from pathlib import Path
@@ -87,17 +86,7 @@ def import_one(src: Path, index_root: Path, sample: Path, tokenizer,
                      where=f"{name} (local rechunk vs notebook)", ordered=True)
     print(f"  parity: {len(chunks):,} chunk ids match, in order  OK")
 
-    # Normalisation is assumed by DenseIndex.search - the dot product *is* the
-    # cosine only if the rows are unit length. A notebook that forgot
-    # normalize_embeddings would otherwise silently change what "similarity"
-    # means, so it is checked rather than trusted.
-    norms = np.linalg.norm(vectors[:min(1000, len(vectors))], axis=1)
-    if not np.allclose(norms, 1.0, atol=1e-3):
-        print(f"  ERROR: vectors are not L2-normalized (norms "
-              f"{norms.min():.4f}-{norms.max():.4f}). DenseIndex treats the dot "
-              f"product as the cosine; re-embed with normalize_embeddings=True.",
-              file=sys.stderr)
-        return False
+    CT.verify_normalized(vectors)
     print(f"  norms: unit length  OK")
 
     dest.mkdir(parents=True, exist_ok=True)

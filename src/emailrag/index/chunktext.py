@@ -98,6 +98,30 @@ def verify_parity(local_ids: list[str], other_ids: list[str], *,
             f"{next(iter(extra), None)!r})")
 
 
+def verify_normalized(matrix, sample_rows: int = 1000, atol: float = 1e-3) -> None:
+    """Raise unless the rows are unit length.
+
+    `DenseIndex.search` treats the dot product *as* the cosine, which is only
+    true for L2-normalized vectors. A notebook that omitted
+    `normalize_embeddings=True` would silently redefine what similarity means -
+    longer chunks would score higher for being longer - and every metric would
+    still compute cleanly. Checked on a sample: a matrix is normalized as a whole
+    or not at all.
+    """
+    import numpy as np
+
+    if len(matrix) == 0:
+        return
+    rows = np.asarray(matrix[:min(sample_rows, len(matrix))])
+    norms = np.linalg.norm(rows, axis=1)
+    if not np.allclose(norms, 1.0, atol=atol):
+        raise ParityError(
+            f"vectors are not L2-normalized (norms {norms.min():.4f}-"
+            f"{norms.max():.4f} over {len(rows)} sampled rows). DenseIndex treats "
+            f"the dot product as the cosine; re-embed with "
+            f"normalize_embeddings=True.")
+
+
 @dataclass
 class ChunkTexts:
     """chunk_id -> text, for some subset of a config's chunks."""

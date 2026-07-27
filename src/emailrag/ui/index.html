@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Email retrieval</title>
+<style>
+:root {
+  --bg: #fbfaf8; --panel: #fff; --line: #e5e1da; --ink: #1c1a17;
+  --muted: #6c665d; --faint: #99928a;
+  --accent: #1a5c8a; --accent-bg: #e8f1f7;
+  --warn: #8a5a1a; --warn-bg: #fdf4e6;
+  --bad: #9c2b2b; --bad-bg: #fbeceb;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181a; --panel: #1e2124; --line: #32363a; --ink: #e8e6e3;
+    --muted: #9aa0a6; --faint: #6f757a;
+    --accent: #79b8e0; --accent-bg: #17303f;
+    --warn: #e0b070; --warn-bg: #33291a;
+    --bad: #e08b86; --bad-bg: #38201f;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 80px; }
+
+header { margin-bottom: 24px; }
+h1 { font-size: 19px; font-weight: 600; margin: 0 0 4px; letter-spacing: -.01em; }
+.sub { color: var(--muted); font-size: 13px; }
+.sub code { font-family: var(--mono); font-size: 12px; }
+
+form { display: flex; gap: 8px; margin-bottom: 12px; }
+input[type=text] {
+  flex: 1; padding: 11px 14px; font-size: 15px; font-family: inherit;
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 8px;
+}
+input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+button {
+  padding: 11px 18px; font-size: 14px; font-weight: 500; font-family: inherit;
+  background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+  cursor: pointer;
+}
+button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+button:disabled { opacity: .5; cursor: default; }
+
+.controls {
+  display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
+  padding: 10px 14px; margin-bottom: 20px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  font-size: 12px; color: var(--muted);
+}
+.controls label { display: flex; gap: 6px; align-items: center; }
+select {
+  font: inherit; font-size: 12px; padding: 3px 6px; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 5px;
+}
+
+.examples { font-size: 12px; color: var(--faint); margin-bottom: 20px; }
+.examples a { color: var(--accent); text-decoration: none; cursor: pointer; margin-right: 12px; }
+.examples a:hover { text-decoration: underline; }
+
+.answer {
+  background: var(--panel); border: 1px solid var(--line);
+  border-left: 3px solid var(--accent); border-radius: 8px;
+  padding: 18px 20px; margin-bottom: 8px; font-size: 15.5px; line-height: 1.7;
+}
+.answer.refused { border-left-color: var(--warn); }
+.answer.failed { border-left-color: var(--bad); }
+.answer p { margin: 0 0 10px; }
+.answer p:last-child { margin: 0; }
+
+cite-ref {
+  /* No right margin: the model writes "…meetings [1]." and a trailing margin
+     leaves the period floating away from the chip. */
+  display: inline-block; min-width: 17px; padding: 0 5px; margin-left: 1px;
+  font-family: var(--mono); font-size: 11px; font-weight: 600; line-height: 17px;
+  text-align: center; vertical-align: 1px;
+  color: var(--accent); background: var(--accent-bg);
+  border-radius: 4px; cursor: pointer;
+}
+cite-ref:hover { color: #fff; background: var(--accent); }
+cite-ref.bad { color: var(--bad); background: var(--bad-bg); }
+
+.flag {
+  font-size: 12.5px; padding: 9px 13px; border-radius: 7px; margin-bottom: 8px;
+  color: var(--warn); background: var(--warn-bg);
+}
+.flag.bad { color: var(--bad); background: var(--bad-bg); }
+.flag b { font-weight: 600; }
+.flag ul { margin: 5px 0 0; padding-left: 18px; }
+
+.timings {
+  font-family: var(--mono); font-size: 11.5px; color: var(--faint);
+  margin: 12px 0 26px; display: flex; flex-wrap: wrap; gap: 12px;
+}
+.badge {
+  font-family: var(--mono); font-size: 10.5px; padding: 1px 6px;
+  border-radius: 4px; background: var(--accent-bg); color: var(--accent);
+}
+
+h2 {
+  font-size: 12px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .07em; color: var(--faint);
+  margin: 0 0 12px; padding-bottom: 7px; border-bottom: 1px solid var(--line);
+}
+
+.src {
+  padding: 14px 16px; margin-bottom: 8px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  scroll-margin-top: 20px;
+}
+.src.used { border-color: var(--accent); }
+.src.flash { animation: flash .9s ease-out; }
+@keyframes flash { from { background: var(--accent-bg); } to { background: var(--panel); } }
+.src-head { display: flex; gap: 9px; align-items: baseline; margin-bottom: 3px; }
+.src-n {
+  font-family: var(--mono); font-size: 11px; font-weight: 600;
+  padding: 1px 6px; border-radius: 4px; color: var(--faint); background: var(--bg);
+  border: 1px solid var(--line); flex-shrink: 0;
+}
+.src.used .src-n { color: var(--accent); background: var(--accent-bg); border-color: var(--accent); }
+.src-subject { font-weight: 600; font-size: 14px; }
+.src-meta { font-size: 11.5px; color: var(--faint); font-family: var(--mono); margin-bottom: 7px; }
+.src-body {
+  font-size: 13px; color: var(--muted); line-height: 1.6;
+  max-height: 4.8em; overflow: hidden; position: relative; cursor: pointer;
+}
+.src-body.open { max-height: none; }
+.src-body:not(.open)::after {
+  content: ""; position: absolute; inset: auto 0 0 0; height: 1.6em;
+  background: linear-gradient(transparent, var(--panel));
+}
+.src-more { font-size: 11px; color: var(--accent); cursor: pointer; margin-top: 4px; }
+
+.status { color: var(--muted); font-size: 13.5px; padding: 20px 0; }
+.spinner {
+  display: inline-block; width: 11px; height: 11px; margin-right: 8px;
+  border: 2px solid var(--line); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.err { color: var(--bad); background: var(--bad-bg); padding: 12px 14px; border-radius: 7px; }
+footer { margin-top: 40px; font-size: 11.5px; color: var(--faint); line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Email retrieval</h1>
+  <div class="sub" id="config">loading index…</div>
+</header>
+
+<form id="form">
+  <input type="text" id="q" placeholder="Ask a question about the corpus…"
+         autocomplete="off" autofocus maxlength="500">
+  <button type="submit" id="go">Ask</button>
+  <button type="button" class="ghost" id="searchOnly" title="Retrieve without calling an LLM">Search</button>
+</form>
+
+<div class="controls">
+  <label>retriever
+    <select id="retriever"></select>
+  </label>
+  <label>rerank
+    <select id="rerank"></select>
+  </label>
+  <label>transform
+    <select id="transform"></select>
+  </label>
+  <label>sources
+    <select id="nSources">
+      <option>4</option><option selected>6</option><option>8</option><option>10</option>
+    </select>
+  </label>
+  <label>as of
+    <input type="text" id="asOf" placeholder="YYYY-MM-DD" size="10"
+           style="font-size:12px;padding:3px 6px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--ink)">
+  </label>
+</div>
+
+<div class="examples">
+  Try:
+  <a data-q="what was decided about the confidentiality agreement">confidentiality agreement</a>
+  <a data-q="what did Enron decide about the merger with Dynegy">Dynegy merger</a>
+  <a data-q="who is handling the California power crisis filings">California filings</a>
+  <a data-q="who won the 2030 world cup">an unanswerable one</a>
+</div>
+
+<div id="out"></div>
+
+<footer>
+  Retrieval is hybrid (dense + BM25, reciprocal-rank fusion) with a cross-encoder
+  rerank; answers are generated only from the retrieved excerpts and every claim
+  must carry a citation. <b>INSUFFICIENT_CONTEXT</b> is the correct answer when the
+  corpus does not contain one — refusal is a measured outcome, not a failure.
+  Latency figures are for this CPU only.
+</footer>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const out = $("out");
+let CONFIG = null;
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function fillSelect(el, values, selected) {
+  el.innerHTML = values.map((v) =>
+    `<option${v === selected ? " selected" : ""}>${esc(v)}</option>`).join("");
+}
+
+fetch("/api/config").then((r) => r.json()).then((c) => {
+  CONFIG = c;
+  $("config").innerHTML =
+    `<code>${esc(c.index)}</code> · ${c.n_chunks.toLocaleString()} chunks over ` +
+    `${c.n_messages.toLocaleString()} messages · embedded on <code>${esc(c.embed_platform)}</code>`;
+  fillSelect($("retriever"), c.retrievers, c.retriever);
+  fillSelect($("rerank"), c.rerank_arms, c.rerank);
+  fillSelect($("transform"), c.transforms, c.transform);
+  // Only now are the selects populated. A deep link submitted before this
+  // resolves would post rerank="" and be rejected by the server.
+  applyDeepLink();
+}).catch(() => { $("config").textContent = "could not reach the server"; });
+
+// Citation markers become clickable chips. Numbers outside the supplied range are
+// marked bad rather than linked: a fabricated citation is the one failure a reader
+// cannot spot by eye, so the UI must not render it as a working link.
+function renderAnswer(text, nSources) {
+  return esc(text)
+    .split(/\n\n+/)
+    .map((para) => "<p>" + para.replace(/\[(\d+)\]/g, (m, n) => {
+      const i = parseInt(n, 10);
+      return (i >= 1 && i <= nSources)
+        ? `<cite-ref data-n="${i}">${i}</cite-ref>`
+        : `<cite-ref class="bad" title="no source ${i} was supplied">${i}</cite-ref>`;
+    }) + "</p>")
+    .join("");
+}
+
+function renderSources(messages, cited) {
+  const used = new Set(cited || []);
+  return messages.map((m) => `
+    <div class="src ${used.has(m.n) ? "used" : ""}" id="src-${m.n}">
+      <div class="src-head">
+        <span class="src-n">${m.n}</span>
+        <span class="src-subject">${esc(m.subject || "(no subject)")}</span>
+      </div>
+      <div class="src-meta">
+        ${esc(m.sender || "unknown")} → ${esc((m.recipients || "").slice(0, 70))}
+        · ${esc(m.date || "undated")} · score ${m.score} · ${m.n_chunks} chunk(s)
+      </div>
+      <div class="src-body">${esc(m.text)}</div>
+      <div class="src-more">show full excerpt</div>
+    </div>`).join("");
+}
+
+function timingRow(t, ans, wall) {
+  const bits = [];
+  if (t.transform_ms > 0.5) bits.push(`transform ${t.transform_ms.toFixed(0)}ms`);
+  bits.push(`retrieval ${t.retrieval_ms.toFixed(0)}ms`);
+  if (t.rerank_ms > 0.5) bits.push(`rerank ${t.rerank_ms.toFixed(0)}ms`);
+  if (ans) bits.push(`generation ${ans.latency_ms.toFixed(0)}ms`);
+  bits.push(`total ${wall.toFixed(0)}ms`);
+  let html = bits.map((b) => `<span>${b}</span>`).join("");
+  if (ans && ans.cached) html += `<span class="badge">cached — no quota spent</span>`;
+  if (ans && ans.model) html += `<span>${esc(ans.model)}</span>`;
+  return `<div class="timings">${html}</div>`;
+}
+
+function render(data, searchOnly) {
+  const s = data.search;
+  const a = data.answer;
+  let html = "";
+
+  if (a) {
+    if (a.error) {
+      html += `<div class="answer failed"><p><b>Generation failed:</b> ${esc(a.error)}</p>
+        <p style="font-size:13px;color:var(--muted);margin:0">Retrieval worked — the
+        sources are below.</p></div>`;
+    } else if (a.refused) {
+      html += `<div class="answer refused"><p><b>No answer in this corpus.</b>
+        The model returned <code>INSUFFICIENT_CONTEXT</code> rather than guessing,
+        which is the correct outcome for a question these emails cannot answer.</p></div>`;
+    } else {
+      html += `<div class="answer">${renderAnswer(a.text, s.messages.length)}</div>`;
+    }
+
+    if (a.invalid_citations && a.invalid_citations.length) {
+      html += `<div class="flag bad"><b>Fabricated citation${a.invalid_citations.length > 1 ? "s" : ""}:</b>
+        ${a.invalid_citations.join(", ")} — only ${a.cited.length + a.invalid_citations.length > 0
+          ? s.messages.length : 0} sources were supplied.</div>`;
+    }
+    if (a.uncited_sentences && a.uncited_sentences.length) {
+      html += `<div class="flag"><b>Uncited claim${a.uncited_sentences.length > 1 ? "s" : ""}</b>
+        — asserted without pointing at a source:<ul>${
+        a.uncited_sentences.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>`;
+    }
+  }
+
+  if (s.transform_kind !== "none" && s.transform_texts.length) {
+    html += `<div class="flag"><b>${esc(s.transform_kind)}</b> rewrote the query as:
+      <ul>${s.transform_texts.map((t) =>
+        `<li>${esc(t.slice(0, 220))}${t.length > 220 ? "…" : ""}</li>`).join("")}</ul></div>`;
+  }
+  if (s.transform_degraded) {
+    html += `<div class="flag bad">The transform failed and fell back to the original
+      query — these are the baseline's results, not the transform's.</div>`;
+  }
+
+  html += timingRow(s.timings, a, data.wall_ms);
+  html += `<h2>${s.messages.length} retrieved message${s.messages.length === 1 ? "" : "s"}${
+    a && a.cited.length ? ` · ${a.cited.length} cited` : ""}</h2>`;
+  html += renderSources(s.messages, a ? a.cited : []);
+  out.innerHTML = html;
+  wireUp();
+}
+
+function wireUp() {
+  out.querySelectorAll("cite-ref[data-n]").forEach((el) => {
+    el.onclick = () => {
+      const target = $("src-" + el.dataset.n);
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      target.classList.remove("flash");
+      void target.offsetWidth;              // restart the animation
+      target.classList.add("flash");
+    };
+  });
+  out.querySelectorAll(".src").forEach((src) => {
+    const body = src.querySelector(".src-body");
+    const more = src.querySelector(".src-more");
+    const toggle = () => {
+      body.classList.toggle("open");
+      more.textContent = body.classList.contains("open")
+        ? "collapse" : "show full excerpt";
+    };
+    body.onclick = toggle;
+    more.onclick = toggle;
+    if (body.scrollHeight <= body.clientHeight + 4) more.style.display = "none";
+  });
+}
+
+let busy = false;
+async function submit(searchOnly) {
+  const question = $("q").value.trim();
+  if (!question || busy) return;
+  busy = true;
+  $("go").disabled = $("searchOnly").disabled = true;
+  out.innerHTML = `<div class="status"><span class="spinner"></span>${
+    searchOnly ? "retrieving" : "retrieving, reranking, generating"}…</div>`;
+
+  try {
+    const res = await fetch(searchOnly ? "/api/search" : "/api/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question,
+        retriever: $("retriever").value,
+        rerank: $("rerank").value,
+        transform: $("transform").value,
+        n_sources: parseInt($("nSources").value, 10),
+        as_of: $("asOf").value.trim(),
+        top_n: 10,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    render(data, searchOnly);
+
+    const p = new URLSearchParams({ q: question });
+    if ($("retriever").value !== CONFIG.retriever) p.set("retriever", $("retriever").value);
+    if ($("rerank").value !== CONFIG.rerank) p.set("rerank", $("rerank").value);
+    if ($("transform").value !== "none") p.set("transform", $("transform").value);
+    if ($("asOf").value.trim()) p.set("as_of", $("asOf").value.trim());
+    if (searchOnly) p.set("mode", "search");
+    history.replaceState(null, "", "?" + p.toString());
+  } catch (e) {
+    out.innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  } finally {
+    busy = false;
+    $("go").disabled = $("searchOnly").disabled = false;
+  }
+}
+
+$("form").onsubmit = (e) => { e.preventDefault(); submit(false); };
+$("searchOnly").onclick = () => submit(true);
+document.querySelectorAll(".examples a").forEach((a) => {
+  a.onclick = () => { $("q").value = a.dataset.q; submit(false); };
+});
+
+// ?q=... makes a result linkable, which matters more than it looks: the answer to
+// "what did we agree about X" is the kind of thing you want to send someone, and
+// the LLM cache means reopening the link costs nothing.
+//
+// Called from the /api/config handler, never at parse time - the selects have to
+// exist before their values are read.
+function applyDeepLink() {
+  const params = new URLSearchParams(location.search);
+  ["retriever", "rerank", "transform"].forEach((k) => {
+    const v = params.get(k);
+    if (v) $(k).value = v;
+  });
+  if (params.get("as_of")) $("asOf").value = params.get("as_of");
+  if (params.get("q")) {
+    $("q").value = params.get("q");
+    submit(params.get("mode") === "search");
+  }
+}
+</script>
+</body>
+</html>

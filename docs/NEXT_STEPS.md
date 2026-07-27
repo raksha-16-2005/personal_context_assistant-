@@ -48,6 +48,8 @@ make bench         # first real tables
 | Transforms | HyDE, multi-query, decomposition, with fired/degraded accounting |
 | Failures | 6-category miss taxonomy + worklist |
 | GPU offload | Kaggle notebook + parity-checked import path |
+| Generation | cited answers, sentinel refusal, citation validation |
+| Assembled system | `pipeline.py`, `make ask`, `make serve` (local web UI) |
 | Index | 1 of 6 built (`thread_aware__all-MiniLM-L6-v2`, 57,997 chunks) |
 
 ## Not built yet
@@ -98,14 +100,28 @@ nothing is labelled yet; the latency columns are already measured.
   it. Needed for the served system and to measure HNSW recall loss against the
   exact baseline.
 
-### Week 4 — generation eval  ·  all new code
+### Week 4 — generation  ·  synthesis built, measurement not
 
-- **`generation/`** — answer synthesis with citations. Does not exist at all;
-  everything so far stops at retrieval.
-- Groundedness, citation accuracy, refusal rate on the 10 unanswerable controls,
-  answer relevance.
+`generation/` exists and works: `make ask Q="..."` and `make serve` produce cited
+answers over the pilot index. What is missing is the *eval*, and it splits into
+two kinds of work.
+
+Needs only code (`generation/judge.py`):
+
+- Groundedness / faithfulness — does each claim follow from its cited source?
+- Citation accuracy — does source [n] actually support the sentence citing it?
+- Answer relevance — does the answer address the question asked?
+
+Needs the eval set or a human:
+
+- Refusal rate over the 10 unanswerable controls (needs the labelled set)
 - **Judge calibration** — hand-label 50 answers, report Cohen's κ against the
-  LLM judge.
+  LLM judge. Without κ, a judge score is one model's opinion of another's.
+
+Two structural checks already run on every answer and need no judge: citation
+markers are validated against the sources supplied, and uncited assertions are
+flagged. They catch only what is visible without reading the sources, which is
+exactly why the judge work is still on this list.
 
 ### Week 5 — ship
 

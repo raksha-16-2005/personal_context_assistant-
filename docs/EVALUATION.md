@@ -146,17 +146,123 @@ with 80 queries there is no honest dev/test split, so the best weight from a
 sweep is selected on the same queries it is scored on and is an optimistic
 upper bound, not a result.
 
-## 8. What these numbers do not support
+## 8. Reranking measures reordering, not truncation
+
+Dimension 4 reranks the top *k* chunks and leaves everything below them in their
+original order. Truncating at *k* would be the obvious implementation and would
+corrupt the result: metrics are message-level over a deep chunk ranking, so
+cutting the ranking at *k* chunks reduces the number of *distinct messages*
+available to recall@20. A reranker that reordered the head perfectly could then
+post a recall drop caused entirely by truncation, and the table would read as
+"reranking hurts recall".
+
+Two further decisions:
+
+**The cross-encoder scores the user's query, never the transform's output.** When
+dimensions 4 and 5 are combined, a HyDE document is a retrieval device — a
+fabricated email — and scoring passages for similarity to a fabrication would
+measure agreement with the generator rather than relevance to the question.
+
+**Passages are the text the index holds, not the original message.** Chunking
+round-trips text through the reference tokenizer, so an indexed chunk is
+lowercased and detokenized. Scoring the pristine original would score a passage
+the retriever never saw. Both candidate rerankers are uncased BERT-family, so the
+cost is punctuation spacing.
+
+### Passage length is an arm, not a detail
+
+Cross-encoder cost grows superlinearly in sequence length, and
+`make bench-rerank-budget` measures 128-token passages at 2–5× the throughput of
+512-token ones on this CPU. Unlike lowering *k*, truncation does not shrink the
+candidate set — every chunk still gets scored, just on less of itself. So the
+default arms isolate the two levers separately:
+
+| Arm | changes vs the one above |
+|---|---|
+| `L6@20` | the plan's original config |
+| `L6@20/t192` | passage length only |
+| `L2@20/t192` | model depth only |
+
+Without both, a quality drop in the shipped arm could not be attributed to
+either lever.
+
+## 9. Query transformation reports how often it fired
+
+A generative rewrite can fail — malformed JSON, an empty document, a spent quota
+— and the safe behaviour is to fall back to the original query. That fallback is
+counted, not silent. A transform that quietly degraded on a third of the eval set
+would be reporting the baseline's numbers under its own name, and no amount of
+nDCG makes that interpretable without the count. `fired` and `degraded` are
+columns in the dimension-5 table.
+
+Two structural decisions:
+
+**Rewrites are fused within a modality before across it.** Four query rewrites
+would otherwise outvote the sparse retriever 4:1 inside a "50/50" hybrid, making
+a dimension-5 change silently a dimension-3 change too. So the rewrites are fused
+by RRF first, then the dense and sparse sides combine by whatever dimension 3
+specifies.
+
+**HyDE rewrites the dense side only.** An invented sender address is useful to a
+bi-encoder and pure noise to BM25, which would match the fabricated name
+literally. One rewrite applied to both retrievers would conflate "does HyDE help"
+with "does HyDE help BM25".
+
+**k rewrites come from one call at temperature 0.** The obvious alternative — k
+samples at temperature > 0 — is unreproducible and costs k times the quota.
+
+## 10. Every LLM call is cached, and that is a methodological choice
+
+Dimension 5, the router and the judge all call an LLM per query per config.
+Without a cache a single `make bench` exceeds the free-tier daily quota, which
+means the tables cannot be regenerated the same day — and reproducibility from
+the published eval set is the project's central claim.
+
+The cache is keyed on provider, model, temperature, max_tokens, system prompt and
+user prompt. The model is part of the key deliberately: the extraction comparison
+is local-model-versus-hosted-model, and serving one model's cached answer for the
+other would fabricate that result. Lookups are rotation-aware, so a prompt
+answered by a fallback model yesterday is not re-paid as a 429 today.
+
+There is no TTL. Staleness is the point: a benchmark that quietly re-queries a
+newer model version stops being reproducible.
+
+## 11. What these numbers do not support
 
 - **Absolute recall against the full 214,282-message corpus.** Ablations run on
   a 50,065-message stratified sample; pooling adds further optimism.
 - **Generalisation beyond 1999–2002 corporate email.** Vocabulary, threading
   conventions, and bulk-mail patterns all differ from modern mail.
 - **Latency on other hardware.** Every timing is CPU-only on one 2019 i7-9750H.
-  See [HARDWARE.md](HARDWARE.md).
+  See [HARDWARE.md](HARDWARE.md). This applies with particular force to
+  dimension 4: the arm selection there is a consequence of *this* CPU's
+  instruction set, and a machine with AVX-512 VNNI would likely reach a different
+  conclusion about int8 quantization.
 - **Statistical significance between close configurations.** 70 answerable
   queries is a small sample; differences under roughly 0.02 nDCG should be read
   as noise unless a significance test is reported alongside them.
+
+## 12. Where quality and speed are allowed to come from different machines
+
+Embedding may be computed on a GPU (see `notebooks/kaggle_build_indices.ipynb`)
+while latency is measured locally. The rule:
+
+> **Quality metrics (recall, MRR, nDCG) are hardware-independent** — same
+> weights, same math, same answer. Compute them wherever is fastest.
+> **Latency metrics are hardware-specific.** Measure them on one stated platform
+> and never mix platforms within a table.
+
+Stated explicitly this is more rigorous than hiding it; stated carelessly it is
+dishonest. Mechanically: every imported index records `embed_platform` in its
+`config.json`, so a T4 throughput figure cannot end up in a table of CPU numbers.
+Retrieval latency is unaffected by where the vectors were built — searching the
+matrix is local CPU work either way — so only the embed-throughput column is
+platform-bound.
+
+The import path refuses anything it cannot prove came from the same corpus: local
+re-chunking must reproduce every chunk id, **in order**, since row *i* of the
+matrix is chunk *i* and nothing else records that pairing. It also rejects
+non-unit-length rows, because `DenseIndex` treats the dot product *as* the cosine.
 
 ---
 
@@ -165,6 +271,10 @@ upper bound, not a result.
 *Populated by `make bench`. Empty until the pilot runs.*
 
 ### Retriever comparison
+
+### Reranking — nDCG gain against added latency
+
+### Query transformation — including the arms that lose
 
 ### Per-class breakdown
 

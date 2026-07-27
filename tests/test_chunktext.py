@@ -90,6 +90,28 @@ def test_unordered_parity_still_catches_a_missing_id():
         CT.verify_parity(["a:0", "b:0"], ["a:0", "c:0"], ordered=False)
 
 
+# -- normalization -----------------------------------------------------------
+
+def test_unit_length_vectors_pass():
+    import numpy as np
+    m = np.eye(4, dtype=np.float32)
+    CT.verify_normalized(m)
+
+
+def test_unnormalized_vectors_are_rejected():
+    # DenseIndex treats the dot product AS the cosine. Without this check a
+    # notebook that omitted normalize_embeddings would make longer chunks score
+    # higher for being longer, and every metric would still compute cleanly.
+    import numpy as np
+    with pytest.raises(CT.ParityError, match="not L2-normalized"):
+        CT.verify_normalized(np.eye(4, dtype=np.float32) * 3.0)
+
+
+def test_an_empty_matrix_is_not_a_normalization_failure():
+    import numpy as np
+    CT.verify_normalized(np.zeros((0, 4), dtype=np.float32))
+
+
 # -- rebuild ----------------------------------------------------------------
 
 def test_full_rebuild_reproduces_every_chunk(sample, monkeypatch):

@@ -47,7 +47,7 @@ PIVOT_CONFIG   ?= thread_aware__all-MiniLM-L6-v2
 .PHONY: help venv download extract corpus sample bench-hardware test clean-derived \
         index-pilot index-all candidates verify validate-eval bench \
         bench-rerank bench-transform bench-rerank-budget export-onnx \
-        failures cache-stats cache-clear
+        failures cache-stats cache-clear serve ask
 
 help:
 	@grep -E '^[a-z0-9-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -147,3 +147,9 @@ test:
 # cache-clear` exists for when you actually mean it.
 clean-derived: ## drop everything regenerable; keeps the tarball, eval set and LLM cache
 	rm -rf data/interim data/index runs
+
+serve: ## local web UI over the assembled pipeline (127.0.0.1 only)
+	$(PY) scripts/serve.py
+
+ask: ## one question, cited answer, in the terminal: make ask Q="..."
+	$(PY) scripts/ask.py "$(Q)"
