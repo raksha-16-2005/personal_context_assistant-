@@ -61,6 +61,30 @@ class SearchResult:
     transform_kind: str = "none"
     transform_texts: list[str] = field(default_factory=list)
     transform_degraded: bool = False
+    # The routing decision and, when the SQL arm ran, what it returned. `None`
+    # means no router is configured and retrieval ran unconditionally.
+    route: dict | None = None
+    commitments: list[dict] = field(default_factory=list)
+
+
+def _corpus_end_date(dates: list, percentile: float = 0.99) -> str:
+    """The corpus's effective end date, as the default `as_of` anchor.
+
+    A percentile, not `max()`, because Enron's headers contain garbage dates: the
+    50k sample spans 1980-01-01 to **2044-01-04**, with 19 messages after 2003 and
+    88 before 1998 against a real span of 1999-2002. Anchoring "what's due next
+    week" on the maximum would put the window in 2044, every temporal query would
+    return nothing, and the emptiness would read as a retrieval failure rather than
+    as one malformed Date header.
+
+    This is only a fallback. Temporal eval queries carry their own `as_of` for
+    exactly this reason, and a caller that knows the date should pass it.
+    """
+    if not dates:
+        return ""
+    ordered = sorted(dates)
+    index = min(int(len(ordered) * percentile), len(ordered) - 1)
+    return ordered[index].strftime("%Y-%m-%d")
 
 
 def collapse(ranked: list[tuple[str, float]], top_n: int,
@@ -112,6 +136,7 @@ class Pipeline:
     def __init__(self, index_dir: Path, sample: Path, *, retriever: str = "hybrid_rrf",
                  rerank: str = DEFAULT_RERANK, transform: str = "none",
                  dense_weight: float = 0.5, threads: int = 6,
+                 route: bool = False, commitments: Path | None = None,
                  verbose: bool = True) -> None:
         self.index_dir = Path(index_dir)
         self.sample = Path(sample)
@@ -153,6 +178,19 @@ class Pipeline:
                             else None)
         self.synthesizer = Synthesizer()
 
+        # The router is opt-in because its SQL arm needs extracted commitments,
+        # and extraction is an overnight job that has not necessarily been run.
+        # With no commitments the SQL arm returns nothing and says so, rather than
+        # reporting "nothing is due" - which would be indistinguishable from a
+        # correct empty answer.
+        self.router = None
+        self.commitments: list = []
+        if route:
+            from .router.classify import QueryRouter
+            self.router = QueryRouter(use_llm=True)
+            self.commitments = self._load_commitments(commitments)
+            self._log(f"router: on, {len(self.commitments):,} commitments loaded")
+
         # First encode allocates buffers and materialises lazily-loaded weights -
         # ~1.3 s measured. Paying it at load time keeps the first user query from
         # looking 40x slower than every later one.
@@ -177,14 +215,18 @@ class Pipeline:
         table = pq.read_table(self.sample, columns=[
             "dedup_key", "sender", "recipients", "subject", "date_utc"])
         out = {}
+        dates = []
         for row in table.to_pylist():
             date = row.get("date_utc")
+            if date is not None:
+                dates.append(date)
             out[row["dedup_key"]] = {
                 "sender": row.get("sender") or "",
                 "recipients": row.get("recipients") or "",
                 "subject": row.get("subject") or "",
                 "date": date.strftime("%Y-%m-%d") if date is not None else "",
             }
+        self._corpus_end = _corpus_end_date(dates)
         return out
 
     # -- retrieval ---------------------------------------------------------
@@ -216,9 +258,62 @@ class Pipeline:
                 [self.dense_weight, 1.0 - self.dense_weight], top_k=RETRIEVE_DEPTH)
         raise ValueError(f"unknown retriever {self.retriever!r}")
 
+    def _load_commitments(self, path: Path | None) -> list:
+        """Extracted commitments from JSONL, for the router's SQL arm.
+
+        JSONL rather than Postgres because the database is optional in this project
+        and the router must be measurable without one; `router/sql.py` keeps the
+        in-memory predicate identical to the SQL so the two cannot drift.
+        """
+        from datetime import date as _date
+
+        from .extraction.schema import Commitment
+
+        root = Path(path) if path else Path("data/commitments")
+        files = ([root] if root.is_file()
+                 else sorted(root.glob("commitments_*.jsonl")) if root.exists() else [])
+        out: list = []
+        for file in files:
+            for line in file.read_text().splitlines():
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                for key in ("due_at", "due_alternative"):
+                    if row.get(key):
+                        row[key] = _date.fromisoformat(row[key])
+                out.append(Commitment(**row))
+        return out
+
     def search(self, question: str, top_n: int = 10, as_of: str = "") -> SearchResult:
-        """Retrieve, rerank, and collapse chunks to messages with metadata."""
+        """Route if configured, then retrieve, rerank, and collapse to messages."""
         timings: dict[str, float] = {}
+        route_info: dict | None = None
+        commitment_rows: list[dict] = []
+
+        if self.router is not None:
+            t0 = time.perf_counter()
+            decision = self.router.route(question)
+            route_info = {
+                "route": decision.route, "reason": decision.reason,
+                "decided_by": decision.decided_by,
+                "confidence": decision.confidence,
+                "n_commitments_indexed": len(self.commitments),
+            }
+            if decision.uses_sql:
+                commitment_rows, note = self._sql_arm(question, as_of)
+                route_info["sql_note"] = note
+            timings["route_ms"] = (time.perf_counter() - t0) * 1000
+
+            if not decision.uses_retrieval:
+                # A pure SQL question skips retrieval entirely. That is the point
+                # of the router: "what's due next week" is a date comparison, and
+                # running retrieval for it would only add latency and distractors.
+                timings.setdefault("transform_ms", 0.0)
+                timings["retrieval_ms"] = 0.0
+                timings["rerank_ms"] = 0.0
+                timings["total_ms"] = sum(timings.values())
+                return SearchResult(question=question, messages=[], timings=timings,
+                                    route=route_info, commitments=commitment_rows)
 
         t0 = time.perf_counter()
         if self.transformer is not None:
@@ -250,7 +345,35 @@ class Pipeline:
             transform_kind=tq.kind,
             transform_texts=[t for t in tq.dense_texts if t != question],
             transform_degraded=tq.degraded,
+            route=route_info, commitments=commitment_rows,
         )
+
+    def _sql_arm(self, question: str, as_of: str) -> tuple[list[dict], str]:
+        """The router's date-comparison arm. Returns (rows, note).
+
+        The note is not decoration. Three different situations produce an empty
+        list - no commitments extracted, no window in the question, an empty window
+        - and a UI that showed all three as "nothing is due" would be lying in two
+        of them.
+        """
+        from .router.sql import filter_commitments, parse_window
+
+        if not self.commitments:
+            return [], ("no commitments have been extracted yet - run "
+                        "scripts/extract_commitments.py. This is not the same as "
+                        "'nothing is due'.")
+
+        anchor = as_of or self._corpus_end
+        window = parse_window(question, anchor)
+        if window is None:
+            return [], (f"the question names no time window (anchored on {anchor}), "
+                        f"so there is nothing to filter on")
+
+        hits = filter_commitments(self.commitments, window)
+        note = f"{len(hits)} commitment(s) due {window.describe()}"
+        if not hits:
+            note += " - the window is genuinely empty"
+        return [c.as_row() for c in hits[:50]], note
 
     def _collapse(self, ranked: list[tuple[str, float]], top_n: int
                   ) -> list[RetrievedMessage]:

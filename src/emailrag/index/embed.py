@@ -15,12 +15,18 @@ import time
 from pathlib import Path
 
 import numpy as np
-import torch
 
+# torch is imported inside the functions that need it, not at module scope. It is
+# a 200 MB dependency pinned to 2.2.2 for Intel-macOS reasons that do not apply
+# anywhere else, and importing it here would make `evaluation/harness.py` and
+# `pipeline.py` unimportable without it - which means CI could not run the test
+# suite, and the suite deliberately fakes every model it touches.
 SHARD_SIZE = 20_000
 
 
 def configure_threads(n: int = 6) -> None:
+    import torch
+
     torch.set_num_threads(n)
     # Intra-op parallelism is where the win is; inter-op adds contention.
     torch.set_num_interop_threads(1)

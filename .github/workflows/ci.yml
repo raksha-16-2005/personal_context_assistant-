@@ -1,0 +1,92 @@
+name: CI
+
+# Two jobs, and the split matters. `tests` must pass on every push and runs in
+# under a minute; `eval-set` guards the one artifact of this project that other
+# people can reuse. Neither downloads the corpus: the Enron tarball is 443 MB and
+# the derived index is 232 MB, so a CI run that needed them would take twenty
+# minutes and fail on a network hiccup rather than on a bug.
+#
+# What that costs, stated honestly: nothing here executes an embedding pass, a
+# retrieval benchmark, or an LLM call. Those need the corpus and API keys, they are
+# measured on one documented machine (docs/HARDWARE.md), and their numbers are not
+# portable to a GitHub runner anyway - a latency table from shared CI hardware
+# would be worse than no table. CI proves the code is correct and the eval set is
+# well-formed. It does not reproduce the results.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # NOT requirements.txt. Those pins exist to keep torch 2.2.2 working on
+      # Intel macOS (the last version with a macosx_x86_64 wheel), and forcing that
+      # combination onto Linux CI would install a two-year-old torch to test code
+      # that never touches it. The suite is designed to run without torch:
+      # embedding and reranking are faked, because loading a real
+      # sentence-transformer would test HuggingFace rather than this project.
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest==8.3.3 numpy'<2' pyarrow==17.0.0 \
+                      bm25s==0.2.13 PyStemmer==2.2.0.3 scipy'<1.15' PyYAML==6.0.2
+
+      - name: Confirm the suite needs no corpus, no network, and no API key
+        env:
+          GEMINI_API_KEY: ""
+          ANTHROPIC_API_KEY: ""
+          GROQ_API_KEY: ""
+          EMAILRAG_LLM_CACHE: "0"
+        run: python -m pytest tests -q
+
+      - name: Check for accidentally committed data or secrets
+        run: |
+          set -e
+          # .gitignore covers these, but a --force or a moved path could slip one
+          # in, and a committed .env or a 90 MB .npy is not something to discover
+          # from a reader's bug report.
+          if git ls-files | grep -E '(^|/)\.env$|\.npy$|\.parquet$|\.onnx$|llm_cache/' ; then
+            echo "::error::data, model weights or secrets are tracked by git"
+            exit 1
+          fi
+          echo "clean: no data, weights or secrets tracked"
+
+  eval-set:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install --upgrade pip && pip install pytest==8.3.3 PyYAML==6.0.2
+
+      # The eval set is the one artifact here that is genuinely reusable by someone
+      # else, so it is validated strictly rather than trusted. A silently malformed
+      # label is worse than a missing one: it produces a number that looks fine.
+      #
+      # Skipped rather than failed when the file does not exist yet - labelling is a
+      # human step (`make verify`) and a red build would not make it happen faster.
+      - name: Validate the published eval set
+        run: |
+          if [ -f data/eval/queries.jsonl ]; then
+            python scripts/validate_eval.py --strict
+          else
+            echo "::notice::data/eval/queries.jsonl not published yet - run 'make verify'"
+          fi

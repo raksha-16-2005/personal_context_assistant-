@@ -119,3 +119,28 @@ def test_retrieve_depth_exceeds_what_is_displayed():
     # Several chunks routinely belong to one message, so 60 chunks can be far
     # fewer than 60 messages.
     assert RETRIEVE_DEPTH >= 100
+
+
+# -- the default temporal anchor ---------------------------------------------
+
+def test_the_corpus_end_anchor_ignores_garbage_dates():
+    # Enron's headers contain junk: the real 50k sample spans 1980-01-01 to
+    # 2044-01-04 against a true span of 1999-2002. Anchoring "what's due next week"
+    # on max() would put the window in 2044, every temporal query would return
+    # nothing, and the emptiness would read as a retrieval failure.
+    from datetime import datetime, timezone
+
+    from emailrag.pipeline import _corpus_end_date
+
+    real = [datetime(2001, 5, i % 28 + 1, tzinfo=timezone.utc) for i in range(200)]
+    junk = [datetime(2044, 1, 4, tzinfo=timezone.utc),
+            datetime(1980, 1, 1, tzinfo=timezone.utc)]
+
+    anchor = _corpus_end_date(real + junk)
+
+    assert anchor.startswith("2001")
+
+
+def test_the_anchor_is_empty_when_nothing_is_dated():
+    from emailrag.pipeline import _corpus_end_date
+    assert _corpus_end_date([]) == ""

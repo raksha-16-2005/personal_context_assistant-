@@ -114,6 +114,29 @@ def onnx_dir(model_id: str) -> Path:
     return ONNX_ROOT / model_id.replace("/", "__")
 
 
+def relevance_from_logits(logits: np.ndarray) -> np.ndarray:
+    """Turn a cross-encoder's raw output into a relevance score per row.
+
+    Rerankers are trained either as regressors (one logit) or as binary
+    classifiers (two: [not_relevant, relevant]). Taking column 0 of a two-logit
+    model would rank by *irrelevance* - a silent, plausible-looking inversion that
+    reads as a bad reranker rather than as a bug.
+
+    A pure function over numpy so the branch can be tested without torch, which
+    keeps CI able to run the suite at all.
+    """
+    logits = np.asarray(logits)
+    if logits.ndim == 1:
+        return logits.astype(np.float32)
+    if logits.shape[1] == 1:
+        return logits[:, 0].astype(np.float32)
+    if logits.shape[1] == 2:
+        return (logits[:, 1] - logits[:, 0]).astype(np.float32)
+    raise ValueError(
+        f"cross-encoder emitted {logits.shape[1]} logits; expected 1 (regressor) "
+        f"or 2 (classifier). Which column means 'relevant' cannot be guessed.")
+
+
 class CrossEncoderReranker:
     """Scores (query, passage) pairs with a torch or ONNX cross-encoder."""
 
@@ -134,12 +157,11 @@ class CrossEncoderReranker:
     @classmethod
     def load(cls, model_id: str, *, onnx_int8: bool = False, batch_size: int = 16,
              max_length: int = MAX_LENGTH, threads: int = 6) -> "CrossEncoderReranker":
-        from transformers import AutoTokenizer
-
         if onnx_int8:
-            # Checked before anything is downloaded: a missing export should
-            # print the one command that fixes it, not fail deep inside a hub
-            # request for a model that was never exported.
+            # Checked before anything is imported or downloaded: a missing export
+            # should print the one command that fixes it, not fail deep inside a
+            # hub request for a model that was never exported - and the check
+            # itself must not need a 200 MB dependency to run.
             path = onnx_dir(model_id)
             if not (path / "model_quantized.onnx").exists():
                 raise FileNotFoundError(
@@ -147,6 +169,7 @@ class CrossEncoderReranker:
                     f"  build it: .venv/bin/python scripts/export_onnx_reranker.py "
                     f"--model {model_id}")
             from optimum.onnxruntime import ORTModelForSequenceClassification
+            from transformers import AutoTokenizer
             # The tokenizer comes from the export directory, not the hub: the
             # export saved the one it was traced with, and a mismatched
             # tokenizer is a silent correctness bug rather than a load error.
@@ -157,7 +180,7 @@ class CrossEncoderReranker:
                        backend="onnx-int8")
 
         import torch
-        from transformers import AutoModelForSequenceClassification
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
         tokenizer = AutoTokenizer.from_pretrained(model_id)
 
@@ -184,12 +207,7 @@ class CrossEncoderReranker:
                                return_tensors="pt")
             with torch.inference_mode():
                 logits = self.model(**encoded).logits
-            logits = logits.detach().cpu().numpy()
-            # Rerankers are trained either as regressors (one logit) or as
-            # binary classifiers (two). Taking column 0 of a 2-logit model would
-            # rank by *irrelevance* - a silent, plausible-looking inversion.
-            out.append(logits[:, 0] if logits.shape[1] == 1
-                       else logits[:, 1] - logits[:, 0])
+            out.append(relevance_from_logits(logits.detach().cpu().numpy()))
         return np.concatenate(out).astype(np.float32)
 
     def rerank(self, query: str, ranked: list[tuple[str, float]],

@@ -1,0 +1,26 @@
+# Space dependencies. NOT the repo root requirements.txt, and the difference is
+# deliberate.
+#
+# The root file pins torch==2.2.2 because that is the last version with a
+# macosx_x86_64 wheel, and everything else is pinned around it. A Space is a fresh
+# Linux environment with CUDA available, so applying that pin here would install a
+# two-year-old CPU torch onto a GPU runner and throw away the accelerator - the
+# same reasoning as notebooks/kaggle_build_indices.ipynb.
+#
+# Left unpinned: torch, so the ZeroGPU image supplies the build matched to its
+# driver. Pinning it against an image you do not control is how a Space breaks on
+# a platform upgrade.
+
+spaces                        # ZeroGPU decorator; provided by the runtime
+gradio>=4.44
+
+sentence-transformers>=3.0
+transformers>=4.44
+numpy<2                       # bm25s and the stored .npy indices are numpy 1.x
+
+bm25s==0.2.13
+PyStemmer==2.2.0.3
+scipy<1.15
+
+pyarrow==17.0.0
+PyYAML==6.0.2

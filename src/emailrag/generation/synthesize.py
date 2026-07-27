@@ -185,11 +185,21 @@ def parse_citations(text: str, n_sources: int) -> tuple[list[int], list[int]]:
 # model answered "Paris is a city in France [5]. The excerpts do not explicitly
 # state that Paris is the capital of France." The second sentence is the model
 # declining to use its own world knowledge, which is exactly right.
+#
+# The source noun alone is not enough. "A confident assertion with no source at
+# all" contains "no source" and is an uncited claim, not a statement about the
+# excerpts - so a reporting verb is required near the noun. That verb is what makes
+# a sentence a claim *about the sources* rather than a claim that happens to use
+# the word.
+_SOURCE_NOUN = r"(?:excerpts?|sources?|emails?|messages?|context|provided \w+)"
+_REPORT_VERB = (r"(?:mention|state|say|indicate|specif|includ|contain|show|name"
+                r"|address|discuss|confirm|describ|reference)")
+
 _META = re.compile(
-    r"\b(?:the (?:excerpts?|sources?|emails?|messages?|context|provided)"
-    r"|no (?:excerpt|source|email|message)"
-    r"|none of the (?:excerpts?|sources?|emails?|messages?)"
-    r"|not (?:mentioned|stated|specified|found|included|available))\b",
+    rf"\b(?:the|these|those|any|none of the|no)\s+{_SOURCE_NOUN}\b"
+    rf"[^.]{{0,60}}?\b{_REPORT_VERB}"
+    rf"|\bnot\s+(?:mentioned|stated|specified|found|included|available|clear)\b"
+    rf"|\bdo(?:es)?\s+not\s+(?:say|state|mention|specify|indicate|explicitly)\b",
     re.IGNORECASE)
 
 

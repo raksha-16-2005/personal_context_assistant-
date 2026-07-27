@@ -47,7 +47,8 @@ PIVOT_CONFIG   ?= thread_aware__all-MiniLM-L6-v2
 .PHONY: help venv download extract corpus sample bench-hardware test clean-derived \
         index-pilot index-all candidates verify validate-eval bench \
         bench-rerank bench-transform bench-rerank-budget export-onnx \
-        failures cache-stats cache-clear serve ask
+        failures cache-stats cache-clear serve ask extract extract-ceiling \
+        extract-compare route-eval pgvector eval-generation gmail-auth gmail-status
 
 help:
 	@grep -E '^[a-z0-9-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -153,3 +154,33 @@ serve: ## local web UI over the assembled pipeline (127.0.0.1 only)
 
 ask: ## one question, cited answer, in the terminal: make ask Q="..."
 	$(PY) scripts/ask.py "$(Q)"
+
+# -- phase 4: extraction and the router ------------------------------------
+
+extract: ## commitments from the eval-scoped threads (local Qwen via Ollama)
+	$(PY) scripts/extract_commitments.py --scope eval --provider ollama
+
+extract-ceiling: ## the same messages through Claude Haiku, for the comparison
+	$(PY) scripts/extract_commitments.py --scope eval --provider anthropic
+
+extract-compare: ## local arm vs ceiling: agreement and date accuracy
+	$(PY) scripts/extract_commitments.py --compare
+
+route-eval: validate-eval ## router accuracy per query class
+	$(PY) scripts/route_eval.py --list
+
+pgvector: ## load the pivot index into pgvector and measure HNSW recall loss
+	$(PY) scripts/load_pgvector.py --config $(PIVOT_CONFIG) --measure-recall
+
+# -- phase 5: generation eval ----------------------------------------------
+
+eval-generation: validate-eval ## cited answers over the eval set, then judge them
+	$(PY) scripts/eval_generation.py
+
+# -- phase 7: your own mail ------------------------------------------------
+
+gmail-auth: ## authorise Gmail (repeat weekly - Testing apps get 7-day tokens)
+	$(PY) scripts/gmail_auth.py
+
+gmail-status: ## how long until the Gmail token needs re-authorising
+	$(PY) scripts/gmail_auth.py --status

@@ -138,11 +138,20 @@ def _body_of(msg) -> str:
     return _decode(msg.get_payload(decode=True) or b"")
 
 
-def parse_file(path: Path, maildir_root: Path) -> Message | None:
+def parse_message(raw: bytes, source_path: str = "", owner: str = "",
+                  folder: str = "") -> Message | None:
+    """Parse RFC822 bytes into a `Message`.
+
+    Split out from `parse_file` so Gmail can use it. Gmail's API returns RFC822
+    with `format=raw`, so both corpora go through exactly this function - which is
+    what makes any difference in their numbers a difference in the mail rather than
+    in the code. A second parser for the second corpus would quietly produce
+    incomparable rows: different body extraction, different address normalisation,
+    a different dedup key for the same message.
+    """
     try:
-        with open(path, "rb") as fh:
-            msg = BytesParser(policy=policy.compat32).parse(fh)
-    except (OSError, ValueError):
+        msg = BytesParser(policy=policy.compat32).parsebytes(raw)
+    except (ValueError, TypeError):
         return None
 
     body = _body_of(msg)
@@ -172,13 +181,6 @@ def parse_file(path: Path, maildir_root: Path) -> Message | None:
     ]).encode("utf-8", "replace")).hexdigest()
     dedup_key = f"sha256:{digest}"
 
-    try:
-        rel = path.relative_to(maildir_root)
-        owner = rel.parts[0]
-        folder = "/".join(rel.parts[1:-1])
-    except ValueError:
-        owner, folder = "", ""
-
     return Message(
         message_id=message_id,
         dedup_key=dedup_key,
@@ -193,10 +195,28 @@ def parse_file(path: Path, maildir_root: Path) -> Message | None:
         in_reply_to=_hdr(msg, "In-Reply-To").strip(),
         references=_hdr(msg, "References").strip(),
         has_list_unsubscribe=msg.get("List-Unsubscribe") is not None,
-        source_path=str(path.relative_to(maildir_root)),
+        source_path=source_path,
         owner=owner,
         folder=folder,
     )
+
+
+def parse_file(path: Path, maildir_root: Path) -> Message | None:
+    """Parse one maildir file. Owner and folder come from its path."""
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+
+    try:
+        rel = path.relative_to(maildir_root)
+        owner = rel.parts[0]
+        folder = "/".join(rel.parts[1:-1])
+        source_path = str(rel)
+    except ValueError:
+        owner, folder, source_path = "", "", str(path)
+
+    return parse_message(raw, source_path=source_path, owner=owner, folder=folder)
 
 
 def iter_user_dirs(maildir_root: Path) -> list[Path]:

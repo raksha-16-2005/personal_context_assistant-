@@ -142,15 +142,21 @@ def test_both_reranker_head_shapes_are_read_correctly(logits, expect_second_high
     # A binary-classifier reranker emits [not_relevant, relevant]. Taking column
     # 0 of that would rank by irrelevance - a silent inversion that reads as a
     # bad reranker rather than as a bug.
-    import torch
-
-    class FakeOut:
-        def __init__(self, arr):
-            self.logits = torch.tensor(arr)
-
-    rr = RR.CrossEncoderReranker(model=lambda **kw: FakeOut(logits),
-                                 tokenizer=lambda *a, **k: {},
-                                 model_id="fake", batch_size=8)
-    scores = rr.score("q", ["first", "second"])
+    #
+    # Tested through the pure function rather than through `score`, so this runs
+    # in CI without torch installed.
+    scores = RR.relevance_from_logits(np.array(logits, dtype=np.float32))
 
     assert bool(scores[1] > scores[0]) is expect_second_higher
+
+
+def test_a_three_logit_head_is_refused_rather_than_guessed():
+    # Which column means "relevant" cannot be inferred, and picking one would
+    # produce a ranking that looks fine and is arbitrary.
+    with pytest.raises(ValueError, match="expected 1"):
+        RR.relevance_from_logits(np.zeros((2, 3), dtype=np.float32))
+
+
+def test_a_flat_logit_array_is_passed_through():
+    out = RR.relevance_from_logits(np.array([3.0, 1.0], dtype=np.float32))
+    assert out.tolist() == [3.0, 1.0]
