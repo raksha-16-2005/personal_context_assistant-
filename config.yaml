@@ -1,0 +1,48 @@
+# Machine profile this project is tuned for:
+#   MacBook Pro 2019 - i7-9750H (6c/12t), 16 GB RAM, no CUDA, no MPS.
+# Every default below is chosen to fit that budget. See docs/HARDWARE.md.
+
+corpus:
+  maildir: data/raw/maildir
+  interim: data/interim
+  # Ablations run on a stratified subsample, NOT the full corpus.
+  # Measured: bge-base = 9.8 docs/s on this CPU -> 375k chunks x 4 chunking
+  # configs = 42 h for one embedding model alone. 50k keeps the full 4x4
+  # matrix at ~8 h (overnight). The final chosen config is built on the
+  # full corpus once.
+  ablation_sample_size: 50000
+  random_seed: 20260726
+
+database:
+  dsn: postgresql:///emailrag
+  # HNSW builds are memory-bound; 64 MB (the pg15 default) thrashes.
+  # Set per-session, not globally - this server hosts other projects.
+  maintenance_work_mem: 2GB
+
+embedding:
+  models:
+    - id: sentence-transformers/all-MiniLM-L6-v2
+      dim: 384
+      measured_docs_per_sec: 67.2
+    - id: BAAI/bge-small-en-v1.5
+      dim: 384
+      measured_docs_per_sec: 34.5
+    - id: BAAI/bge-base-en-v1.5
+      dim: 768
+      measured_docs_per_sec: 9.8
+  batch_size: 32
+  torch_threads: 6            # physical cores; hyperthreads hurt GEMM throughput
+
+rerank:
+  # Measured top-50 latency on this CPU:
+  #   BAAI/bge-reranker-base            6802 ms  <- quality ceiling only, offline
+  #   cross-encoder/ms-marco-MiniLM-L-6-v2  962 ms
+  # Shipped config reranks top-20 with MiniLM + ONNX int8 to stay sub-200 ms.
+  shipped:
+    id: cross-encoder/ms-marco-MiniLM-L-6-v2
+    top_k: 20
+    onnx_int8: true
+  ceiling:
+    id: BAAI/bge-reranker-base
+    top_k: 50
+    onnx_int8: false

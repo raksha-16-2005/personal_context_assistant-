@@ -1,0 +1,31 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+
+# API keys. This repo is meant to be published - never commit a real key.
+.env
+.env.*
+!.env.example
+
+# corpus + derived artifacts (regenerate with `make corpus`)
+data/raw/
+data/interim/
+data/index/
+!data/eval/
+runs/
+*.log
+
+# Cached LLM responses. Every record stores the full prompt, and prompts embed
+# message bodies - fine for Enron, disqualifying once phase 7 points this at a
+# real mailbox. Never commit it, and never upload it with the eval set.
+data/llm_cache/
+
+# Exported ONNX models (~114 MB per cross-encoder). Regenerate with
+# `make export-onnx`; the quantization_report.json it writes is the part worth
+# keeping, and it is small enough to paste into the README.
+data/onnx/
+
+# the eval set IS published - never ignore it
+!data/eval/*.jsonl

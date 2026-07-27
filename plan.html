@@ -1,0 +1,349 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Email Retrieval System — RAG Build Plan</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 9.6pt; line-height: 1.5; color: #1a1a1a; margin: 0;
+  }
+  h1 { font-size: 21pt; margin: 0 0 4pt; letter-spacing: -0.4pt; color: #111; }
+  .sub { color: #555; font-size: 10pt; margin: 0 0 3pt; }
+  .meta { color: #888; font-size: 8.5pt; margin: 0 0 20pt;
+          border-bottom: 2px solid #111; padding-bottom: 14pt; }
+  h2 { font-size: 13pt; margin: 22pt 0 8pt; color: #111;
+       border-bottom: 1px solid #d0d0d0; padding-bottom: 4pt;
+       letter-spacing: -0.2pt; page-break-after: avoid; }
+  h3 { font-size: 10.4pt; margin: 14pt 0 5pt; color: #222; page-break-after: avoid; }
+  p { margin: 0 0 7pt; }
+  ul, ol { margin: 0 0 8pt; padding-left: 17pt; }
+  li { margin-bottom: 3pt; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 8.4pt;
+         background: #f0f0f0; padding: 1px 4px; border-radius: 3px; color: #111; }
+  pre { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 7.7pt;
+        line-height: 1.42; background: #f7f7f7; border: 1px solid #e0e0e0;
+        border-left: 3px solid #666; padding: 9pt 11pt; border-radius: 3px;
+        white-space: pre; margin: 0 0 10pt; page-break-inside: avoid; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 11pt;
+          font-size: 8.6pt; page-break-inside: avoid; }
+  th { text-align: left; background: #eeeeee; font-weight: 600; padding: 5pt 7pt;
+       border-bottom: 1.5px solid #999; color: #111; }
+  td { padding: 4.5pt 7pt; border-bottom: 1px solid #e2e2e2; vertical-align: top; }
+  tr:last-child td { border-bottom: 1px solid #999; }
+  blockquote { margin: 0 0 10pt; padding: 8pt 12pt; background: #f4f4f4;
+               border-left: 3px solid #444; font-style: italic; color: #333; }
+  blockquote p { margin: 0 0 4pt; } blockquote p:last-child { margin: 0; }
+  .callout { background: #f9f6ee; border: 1px solid #ddd2b0; border-left: 3px solid #b8952f;
+             padding: 8pt 12pt; margin: 0 0 11pt; border-radius: 2px; page-break-inside: avoid; }
+  .callout p:last-child { margin: 0; }
+  .callout .label { font-weight: 700; font-size: 8pt; letter-spacing: 0.6pt;
+                    text-transform: uppercase; color: #8a6d1f; display: block; margin-bottom: 3pt; }
+  .shipline { background: #eef3ee; border: 1px solid #b8ccb8; border-left: 3px solid #2f7a3f;
+              padding: 8pt 12pt; margin: 0 0 11pt; border-radius: 2px; }
+  .shipline p:last-child { margin: 0; }
+  .shipline .label { font-weight: 700; font-size: 8pt; letter-spacing: 0.6pt;
+                     text-transform: uppercase; color: #2f7a3f; display: block; margin-bottom: 3pt; }
+  .cut { background: #f7eeee; border: 1px solid #d8bcbc; border-left: 3px solid #a33;
+         padding: 8pt 12pt; margin: 0 0 11pt; border-radius: 2px; page-break-inside: avoid; }
+  .cut p:last-child { margin: 0; }
+  .cut .label { font-weight: 700; font-size: 8pt; letter-spacing: 0.6pt;
+                text-transform: uppercase; color: #a33; display: block; margin-bottom: 3pt; }
+  .pagebreak { page-break-before: always; }
+  .yes { color: #2f7a3f; font-weight: 600; }
+  .no { color: #a33; font-weight: 600; }
+  .dup { color: #b8862f; font-weight: 600; }
+  .tight td, .tight th { padding: 3.5pt 7pt; }
+  strong { color: #000; }
+  .strike { text-decoration: line-through; color: #999; }
+</style>
+</head>
+<body>
+
+<h1>Email Retrieval System</h1>
+<p class="sub">A hybrid RAG pipeline over email, with a SQL/semantic query router.</p>
+<p class="meta">Scoped to fill the one gap in an existing portfolio &nbsp;·&nbsp; 5 weeks &nbsp;·&nbsp; $0 &nbsp;·&nbsp; 26 July 2026</p>
+
+<h2>1. Why this project, and why only this</h2>
+
+<p>Scoped against what the portfolio already contains. The point is to fill a gap, not to add a fifth broad project.</p>
+
+<table class="tight">
+<tr><th style="width:24%">Skill</th><th style="width:16%">Status</th><th>Already covered by</th></tr>
+<tr><td>Classical ML</td><td class="dup">Covered ×2</td><td>Security Intelligence (XGBoost, CUSUM) · Rainfall (Isolation Forest, DBSCAN, Z-score)</td></tr>
+<tr><td>Deep learning / distillation</td><td class="yes">Covered</td><td>Knowledge-distillation framework — a stronger artifact than a one-off LoRA run</td></tr>
+<tr><td>LLM applications</td><td class="yes">Covered</td><td>KuChiKu — Gemini, VAPI voice agents, orchestration</td></tr>
+<tr><td>Full-stack / dashboards</td><td class="dup">Covered ×3</td><td>Next.js in three projects, Streamlit in one</td></tr>
+<tr><td>Backend engineering</td><td class="yes">Covered</td><td>Spring Boot internship</td></tr>
+<tr><td><strong>RAG / information retrieval</strong></td><td class="no">Absent</td><td><strong>— nothing</strong></td></tr>
+</table>
+
+<div class="cut">
+<span class="label">Deliberately cut from the earlier plan</span>
+<p><strong>The noise classifier</strong> — a fourth trained classifier after XGBoost and an ensemble anomaly detector proves nothing new. Keep a 20-line rules filter for cost control; do not make it a showcase.<br>
+<strong>The LoRA distillation</strong> — redundant against an existing distillation <em>framework</em>, which is the better artifact.</p>
+</div>
+
+<p>The portfolio is already broad. A fifth broad project dilutes it; one deep, narrow, heavily measured project is the counterweight. So <strong>retrieval is ~60% of the effort here</strong> and everything else exists to serve it.</p>
+
+<h2>2. What this project proves</h2>
+
+<table class="tight">
+<tr><th style="width:34%">Capability</th><th>Demonstrated by</th></tr>
+<tr><td>Retrieval architecture</td><td>Sparse / dense / hybrid fusion, cross-encoder reranking</td></tr>
+<tr><td>IR evaluation</td><td>Hand-verified eval set; recall@k, MRR, nDCG@10</td></tr>
+<tr><td>Systematic ablation</td><td>Six independent dimensions, each measured in isolation</td></tr>
+<tr><td>Engineering judgment</td><td>Published negative results; latency/quality tradeoffs made explicit</td></tr>
+<tr><td>Hybrid symbolic + neural design</td><td>Query router sending temporal queries to SQL, semantic to vectors</td></tr>
+<tr><td>Generation quality</td><td>Groundedness, citation accuracy, refusal rate on unanswerable queries</td></tr>
+<tr><td>Meta-evaluation</td><td>LLM judge calibrated against human labels (Cohen's κ)</td></tr>
+</table>
+
+<div class="callout">
+<span class="label">The one thing that separates this from a tutorial</span>
+<p>Not the technology list — <strong>every claim carries a number, and the eval set is published so anyone can reproduce it.</strong> "Built RAG over my email" is indistinguishable from a weekend follow-along. An ablation table across six dimensions with a documented metric choice is not.</p>
+</div>
+
+<h2>3. System design</h2>
+
+<pre><code>          Enron corpus (public, ~500k msgs)  +  your Gmail (private)
+                                 │
+                    rules filter — drop bulk mail (~80%)
+                                 │
+        ┌────────────────────────┴────────────────────────┐
+        │                                                 │
+   thread-aware chunking                        LLM extraction (thin)
+   embed → pgvector + BM25                      → commitments table
+        │                                                 │
+        └────────────────────────┬────────────────────────┘
+                                 │
+                    ╔════════════╧════════════╗
+                    ║      QUERY ROUTER       ║
+                    ╚════════════╤════════════╝
+              ┌──────────────────┼──────────────────┐
+       temporal /            semantic            ambiguous
+       aggregate                 │                   │
+          │                      │              both → merge
+      SQL over            hybrid retrieval
+     commitments          + cross-encoder rerank
+          │                      │
+          └──────────┬───────────┘
+                     │
+          grounded generation + citations
+                     │
+          eval: faithfulness · citation accuracy · refusal rate</code></pre>
+
+<p><strong>Note the inversion from the earlier plan.</strong> Extraction is no longer the headline — it exists to populate the SQL side of the router, which is what makes the routing result provable. Two extraction models, not five.</p>
+
+<h2 class="pagebreak">4. Week 0 — Corpus and eval set</h2>
+
+<p>Nothing downstream is meaningful without this. If the project dies, it dies here.</p>
+
+<h3>Corpus</h3>
+<ul>
+<li><strong>Enron</strong> (CMU maildir) — public, so the demo and benchmark are shareable</li>
+<li><strong>Your Gmail</strong> — via own OAuth client in testing mode; private, used for the qualitative half</li>
+<li>Rules filter: <code>List-Unsubscribe</code> header, <code>no-reply@</code> / <code>notifications@</code> patterns. ~20 lines, no ML</li>
+</ul>
+
+<h3>The retrieval eval set — 80 queries</h3>
+<p>Generate candidate queries with an LLM from real threads, then <strong>hand-verify every single one</strong>. For each query, record the set of message IDs that genuinely answer it.</p>
+
+<p>Stratify deliberately, because the router result depends on this split:</p>
+<table class="tight">
+<tr><th style="width:26%">Query class</th><th style="width:12%">Count</th><th>Example</th></tr>
+<tr><td>Semantic / topical</td><td>35</td><td>"what did we decide about the pricing model"</td></tr>
+<tr><td>Temporal / aggregate</td><td>25</td><td>"what's due this Thursday", "how many deadlines next week"</td></tr>
+<tr><td>Entity-scoped</td><td>10</td><td>"everything from Priya about the audit"</td></tr>
+<tr><td>Unanswerable (control)</td><td>10</td><td>Questions the corpus genuinely cannot answer</td></tr>
+</table>
+
+<p>The unanswerable set is the one most people skip. It is how you measure whether the system correctly <em>refuses</em> instead of hallucinating — and refusal rate is a real, reportable metric.</p>
+
+<p><strong>Budget ~4 hours.</strong> Publish it as JSONL in the repo.</p>
+
+<h2>5. Weeks 1–2 — The retrieval ablations</h2>
+
+<p>Six dimensions, each varied independently against the same eval set. All of it runs free and locally.</p>
+
+<h3>Dimension 1 — Chunking</h3>
+<table class="tight">
+<tr><th>Strategy</th><th>Why include it</th></tr>
+<tr><td>Fixed 512 tokens</td><td>The naive default everyone ships</td></tr>
+<tr><td>Fixed 512 + 64 overlap</td><td>Isolates the effect of overlap alone</td></tr>
+<tr><td>Thread-aware (never split mid-message)</td><td>Respects the natural document boundary</td></tr>
+<tr><td>Whole message, no chunking</td><td>Most emails are short — test whether chunking helps at all</td></tr>
+</table>
+<p>Almost nobody ablates chunking, and it frequently matters more than the retriever choice. Cheap to test, and a genuinely differentiating result.</p>
+
+<h3>Dimension 2 — Embedding model</h3>
+<p><code>all-MiniLM-L6-v2</code> (22M) · <code>bge-small-en-v1.5</code> (33M) · <code>bge-base-en-v1.5</code> (109M) · Gemini embeddings (free tier). Report quality against index size and encode latency — a size/quality curve, not a single winner.</p>
+
+<h3>Dimension 3 — Retriever</h3>
+<table class="tight">
+<tr><th style="width:34%">Configuration</th><th>R@5</th><th>R@20</th><th>MRR</th><th>nDCG@10</th><th>p95 ms</th></tr>
+<tr><td>BM25 only</td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>Dense only</td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>Hybrid — RRF fusion</td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>Hybrid — weighted score fusion</td><td></td><td></td><td></td><td></td><td></td></tr>
+</table>
+
+<h3>Dimension 4 — Reranking</h3>
+<p><code>bge-reranker-base</code> as a cross-encoder over the top-50, cut to top-5. Local, free. Report the nDCG gain <em>against</em> the added latency — this is the clearest tradeoff in the whole system.</p>
+
+<h3>Dimension 5 — Query transformation</h3>
+<p>Raw query · HyDE · multi-query expansion · decomposition for multi-hop questions.</p>
+
+<div class="callout">
+<span class="label">Publish the ones that lose</span>
+<p>"HyDE cost 400 ms for +0.01 nDCG, so I cut it" is a <em>stronger</em> signal than shipping it because a blog post recommended it. Negative results with numbers demonstrate more judgment than a longer list of techniques.</p>
+</div>
+
+<h3>Dimension 6 — Failure analysis</h3>
+<p>Take every query where recall@20 misses and categorize <em>why</em>:</p>
+<ul>
+<li><strong>Vocabulary mismatch</strong> — query and document use different words for the same thing</li>
+<li><strong>Chunk boundary</strong> — the answer straddles two chunks</li>
+<li><strong>Temporal</strong> — no amount of semantic similarity answers "due Thursday" (this is what motivates the router)</li>
+<li><strong>Multi-hop</strong> — the answer requires joining two messages</li>
+<li><strong>Genuine absence</strong> — the eval label is wrong; fix it</li>
+</ul>
+<p>A README section titled <strong>"Where this fails"</strong> is worth more than another 0.02 nDCG. It is also the section that generates the best interview conversation.</p>
+
+<h2 class="pagebreak">6. Week 3 — Extraction and the router</h2>
+
+<h3>Extraction — deliberately thin</h3>
+<p>This is infrastructure for the router, not the centerpiece. Two models only: local Qwen 2.5 3B via Ollama, and Claude Haiku 4.5 batched as the quality ceiling.</p>
+
+<pre><code>commitments(
+  id, source_msg_id, thread_id,
+  type,          -- meeting | deadline | ask_of_me | promise_i_made
+  counterparty,
+  description,
+  due_at,        -- absolute UTC, resolved from relative language
+  confidence,
+  status,        -- open | done | cancelled
+  created_at
+)</code></pre>
+
+<p>The one hard part worth measuring: <strong>relative-date resolution</strong>. "Next Thursday" in an email sent on a Tuesday. Pass the sent-timestamp and sender timezone into every prompt, require an absolute output, and report date-accuracy as its own metric. It is the top source of silent wrongness.</p>
+
+<h3>The query router — the differentiator</h3>
+<p>Classify each query into <strong>temporal/aggregate → SQL</strong>, <strong>semantic → hybrid retrieval</strong>, or <strong>ambiguous → run both and merge</strong>. Start with a small classifier or a cheap LLM call; measure either way.</p>
+
+<p>Two things to measure:</p>
+<ol>
+<li><strong>Router accuracy</strong> against your labeled query classes</li>
+<li><strong>End-to-end quality, router vs. vector-only</strong>, broken down <em>by query class</em></li>
+</ol>
+
+<p>The expected headline — that dense retrieval fails almost completely on the 25 temporal queries while SQL answers them exactly — is the concrete, measured insight that makes this project memorable. It also justifies the whole two-store architecture with evidence rather than assertion.</p>
+
+<table class="tight">
+<tr><th>Query class</th><th>Vector-only nDCG@10</th><th>With router</th><th>Δ</th></tr>
+<tr><td>Semantic / topical</td><td></td><td></td><td>≈ 0 (same path)</td></tr>
+<tr><td>Temporal / aggregate</td><td></td><td></td><td>large</td></tr>
+<tr><td>Entity-scoped</td><td></td><td></td><td></td></tr>
+</table>
+
+<h2>7. Week 4 — Generation evaluation</h2>
+
+<p>Most RAG projects stop at retrieval. Measuring the <em>answer</em> is where the remaining differentiation is.</p>
+
+<ul>
+<li><strong>Groundedness / faithfulness</strong> — is every claim supported by a retrieved chunk?</li>
+<li><strong>Citation accuracy</strong> — does each citation actually point at the source of that claim?</li>
+<li><strong>Refusal rate</strong> — on the 10 unanswerable controls, does it correctly decline instead of inventing an answer?</li>
+<li><strong>Answer relevance</strong> — does it address what was asked?</li>
+</ul>
+
+<h3>Calibrate the judge</h3>
+<p>Score with an LLM judge, then hand-label 50 of the same answers yourself and report <strong>judge/human agreement (Cohen's κ)</strong>.</p>
+<p>Using an LLM judge shows competence. <em>Validating</em> it shows you understand that an unvalidated judge is just another unmeasured component. Very few candidates do this, and it is a strong signal.</p>
+
+<h2>8. Schedule</h2>
+
+<div class="shipline">
+<span class="label">Ship line</span>
+<p>Five weeks, and <strong>week 5 ends with a published repo</strong>. Resist adding scope — this project's value is depth on one axis, not breadth.</p>
+</div>
+
+<table>
+<tr><th style="width:8%">Week</th><th>Deliverable</th></tr>
+<tr><td>0</td><td>Repo, Enron loader, rules filter, <strong>80-query eval set hand-verified and published</strong></td></tr>
+<tr><td>1</td><td>Index built. Chunking ablation (4 configs) + embedding-model comparison (4 models)</td></tr>
+<tr><td>2</td><td>Retriever ablation, reranking, query transformation. <strong>Failure analysis</strong></td></tr>
+<tr><td>3</td><td>Extraction (2 models) → commitments table. Query router + per-class results</td></tr>
+<tr><td>4</td><td>Generation eval: groundedness, citations, refusal. Judge calibration (κ)</td></tr>
+<tr><td>5</td><td>HF Spaces demo, README with all tables, <code>EVALUATION.md</code>, writeup on the router finding</td></tr>
+</table>
+
+<h2>9. Repo standards</h2>
+
+<ul>
+<li><strong>README opens with the ablation tables.</strong> Not an architecture diagram. Numbers first, prose second.</li>
+<li><strong><code>make bench</code> reproduces every table</strong> from the published eval set. Reproducibility is the entire claim.</li>
+<li><strong>Publish the eval set</strong> — 80 queries with relevance labels, as JSONL. A public IR eval set is a real contribution; most people never build one.</li>
+<li><strong><code>EVALUATION.md</code></strong> — why nDCG@10 and not accuracy, why these query classes, what the unanswerable controls measure. <em>This is the document that gets you hired.</em></li>
+<li><strong>A "Where this fails" section</strong> with the failure taxonomy and counts.</li>
+<li><strong>GitHub Actions CI</strong> — free; runs tests and the local-model benchmark rows on push.</li>
+<li><strong>Demo on Hugging Face Spaces</strong> (free) — query the Enron index live, see retrieved chunks with scores, the router's decision, and the cited answer. Public data, genuinely shareable.</li>
+<li><strong>One writeup</strong> on the router finding or the chunking result. A single good post beats five thin ones.</li>
+</ul>
+
+<h2>10. Cost</h2>
+
+<table class="tight">
+<tr><th style="width:70%">Item</th><th>Cost</th></tr>
+<tr><td>Embeddings + reranker — local sentence-transformers</td><td>$0</td></tr>
+<tr><td>Qwen 2.5 3B extraction — Ollama, local</td><td>$0</td></tr>
+<tr><td>Groq / Gemini AI Studio free tiers (router, judge)</td><td>$0</td></tr>
+<tr><td>Postgres + pgvector — Neon free tier</td><td>$0</td></tr>
+<tr><td>Hosting — Hugging Face Spaces free tier</td><td>$0</td></tr>
+<tr><td>GitHub + Actions</td><td>$0</td></tr>
+<tr><td>Claude Haiku ceiling rows — batched + cached</td><td>~$3, inside the signup credit</td></tr>
+<tr><td><strong>Total</strong></td><td><strong>$0</strong></td></tr>
+</table>
+
+<h2>11. The resume bullets this produces</h2>
+
+<blockquote>
+<p><strong>Email Retrieval System</strong> — github.com/you/project</p>
+<p>· Built a hybrid retrieval pipeline (BM25 + dense + cross-encoder rerank) over 500k emails; +0.21 nDCG@10 over a dense-only baseline at 180 ms p95</p>
+<p>· Ablated chunking, embedding model, fusion, and query transformation across an 80-query hand-labeled eval set — found thread-aware chunking worth +0.08 nDCG and HyDE not worth its 400 ms</p>
+<p>· Designed a SQL/semantic query router after measuring that dense retrieval answered only 12% of temporal queries correctly versus 96% via structured query</p>
+<p>· Evaluated generation for groundedness, citation accuracy, and refusal on unanswerable queries; validated the LLM judge against human labels at κ = 0.81</p>
+<p>· Published the eval set and a reproducible benchmark harness</p>
+</blockquote>
+
+<p>Five bullets, all retrieval, every one with a number. Paired with the existing ML, distillation, and LLM-application projects, the portfolio then covers classical ML, deep learning, LLM apps, IR/RAG, and backend — with no redundancy.</p>
+
+<h2 class="pagebreak">12. Appendix — higher-leverage than this project</h2>
+
+<p>Worth stating plainly: <strong>retrofitting numbers onto the three existing projects will improve the resume more per hour than building anything new.</strong> The models are already built. All that is missing is running evaluation and writing down the results.</p>
+
+<table>
+<tr><th style="width:50%">Current bullet</th><th>What it should say</th></tr>
+<tr>
+<td class="strike">Developed backend machine learning models in Python using XGBoost and CUSUM-based anomaly detection to identify real-time and sophisticated network threats.</td>
+<td>XGBoost threat classifier at <strong>0.94 AUC / 2.8% FPR</strong> over <strong>1.2M network flows</strong>; CUSUM drift detector caught <strong>89%</strong> of injected attacks within 4 windows at <strong>12 ms p95</strong> inference.</td>
+</tr>
+<tr>
+<td class="strike">Implemented ensemble anomaly detection using Isolation Forest, DBSCAN, and Rolling Z-Score Analysis for regional risk assessment.</td>
+<td>Ensemble of Isolation Forest, DBSCAN and rolling Z-score raised anomaly <strong>F1 from 0.61 to 0.78</strong> over the best single detector across <strong>N years / M stations</strong> of weather data.</td>
+</tr>
+<tr>
+<td class="strike">Implemented AI-driven interview evaluation with personalized feedback, performance analytics, and progress tracking.</td>
+<td>Interview scoring rubric validated against <strong>N human-rated sessions</strong> (κ = X); <strong>p50 voice round-trip latency Y ms</strong> across <strong>Z sessions</strong>.</td>
+</tr>
+</table>
+
+<p>Every one of those numbers is recoverable from work already done. Budget one weekend.</p>
+
+<p>One structural note: <strong>Security Intelligence and Rainfall are both "anomaly detection plus a dashboard."</strong> A reader sees the same shape twice. Lead with the stronger one and compress the other, or reframe one around what makes it distinct — real-time streaming versus geospatial forecasting.</p>
+
+</body>
+</html>

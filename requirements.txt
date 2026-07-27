@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------------------
+# HARD CONSTRAINT: macOS x86_64 (Intel Mac).
+# PyTorch stopped publishing macosx_x86_64 wheels after 2.2.2 (current: 2.13.0).
+# transformers >= 4.46 hard-requires torch >= 2.4 and will silently disable the
+# torch backend if it is not present:
+#   "[transformers] Disabling PyTorch because PyTorch >= 2.4 is required but found 2.2.2"
+# The pins below are the newest combination verified working on this machine.
+# Do not bump torch/transformers without re-verifying on Intel macOS.
+# ---------------------------------------------------------------------------
+torch==2.2.2
+transformers==4.44.2
+sentence-transformers==3.0.1
+huggingface_hub==0.24.6
+tokenizers<0.20
+numpy<2                      # torch 2.2.2 is built against the numpy 1.x ABI
+
+# retrieval
+bm25s==0.2.13                # sparse BM25; rank_bm25 is too slow at 100k+ docs
+PyStemmer==2.2.0.3           # bm25s stemmer backend
+scipy<1.15
+
+# storage
+psycopg[binary]==3.2.3
+pgvector==0.3.6
+pyarrow==17.0.0
+pandas==2.2.3
+
+# pipeline
+PyYAML==6.0.2
+tqdm==4.67.1
+python-dateutil==2.9.0.post0
+
+# inference speedups (CPU / AVX2)
+onnxruntime==1.19.2
+optimum[onnxruntime]==1.23.3
+
+# dev
+pytest==8.3.3
