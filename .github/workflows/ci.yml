@@ -75,18 +75,31 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - run: pip install --upgrade pip && pip install pytest==8.3.3 PyYAML==6.0.2
+      # pyarrow: validate_eval.py cross-checks labels against sample.parquet
+      # when it's present. The corpus itself is never in this checkout (see the
+      # tests job's data/secrets guard), so that check no-ops here - but the
+      # import at the top of the script isn't conditional on the file existing.
+      - run: pip install --upgrade pip && pip install pytest==8.3.3 PyYAML==6.0.2 pyarrow==17.0.0
 
       # The eval set is the one artifact here that is genuinely reusable by someone
-      # else, so it is validated strictly rather than trusted. A silently malformed
-      # label is worse than a missing one: it produces a number that looks fine.
+      # else, so it is validated rather than trusted. A silently malformed label
+      # is worse than a missing one: it produces a number that looks fine.
+      #
+      # No --strict: per validate_eval.py's own docstring, stratification
+      # shortfalls are warnings, not errors, because they are the expected state
+      # of an eval set that is still being labelled - this project's own eval set
+      # is at 26 of 80 queries right now, on purpose, not by oversight (see
+      # NEXT_STEPS.md). --strict would fail every push until labelling finishes,
+      # which is a human task measured in hours, not something a build should
+      # gate on. What --strict is still for: running it yourself, locally,
+      # right before publishing a "final" eval set.
       #
       # Skipped rather than failed when the file does not exist yet - labelling is a
       # human step (`make verify`) and a red build would not make it happen faster.
       - name: Validate the published eval set
         run: |
           if [ -f data/eval/queries.jsonl ]; then
-            python scripts/validate_eval.py --strict
+            python scripts/validate_eval.py
           else
             echo "::notice::data/eval/queries.jsonl not published yet - run 'make verify'"
           fi
