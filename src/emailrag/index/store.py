@@ -19,8 +19,6 @@ import re
 from contextlib import contextmanager
 
 import numpy as np
-import psycopg
-from pgvector.psycopg import register_vector
 
 _SAFE = re.compile(r"^[a-z0-9_]+$")
 
@@ -36,6 +34,13 @@ def table_name(chunking: str, model_id: str) -> str:
 
 @contextmanager
 def connect(dsn: str, maintenance_work_mem: str | None = None):
+    # Imported here, not at module scope: this file is imported by
+    # test_retrieval.py for `table_name` alone, and CI never installs
+    # psycopg (see ci.yml) since it does no DB work. Same lazy-import
+    # pattern as embed.py's torch import.
+    import psycopg
+    from pgvector.psycopg import register_vector
+
     with psycopg.connect(dsn, autocommit=True) as conn:
         register_vector(conn)
         if maintenance_work_mem:

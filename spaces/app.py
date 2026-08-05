@@ -35,8 +35,12 @@ from pathlib import Path
 
 import gradio as gr
 
-# Repo layout: this file lives in spaces/, the package in src/.
-ROOT = Path(__file__).resolve().parents[1]
+# Two layouts share this file. In the source repo it lives in spaces/, with
+# src/ one level up. A deployed Space is flat - app.py and src/ are siblings -
+# because a Space needs app.py at its root. Detect which one this is rather
+# than assume, so the same file works unmodified in both places.
+_HERE = Path(__file__).resolve().parent
+ROOT = _HERE if (_HERE / "src" / "emailrag").is_dir() else _HERE.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 try:

@@ -29,7 +29,15 @@ def configure_threads(n: int = 6) -> None:
 
     torch.set_num_threads(n)
     # Intra-op parallelism is where the win is; inter-op adds contention.
-    torch.set_num_interop_threads(1)
+    # Best-effort: torch only allows this to be set once, before any inter-op
+    # work has run. Some runtimes (ZeroGPU Spaces) already touch it during
+    # their own startup, and a second call raises rather than no-ops - this
+    # tuning is a local-CPU optimization, not something worth crashing
+    # pipeline init over when the runtime got there first.
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        pass
 
 
 def load_model(model_id: str):

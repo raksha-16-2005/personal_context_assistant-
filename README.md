@@ -2,6 +2,10 @@
 
 A hybrid RAG pipeline over email, with a SQL/semantic query router.
 
+**Live demo:** [huggingface.co/spaces/raksha-16-2005/email-retrieval-rag](https://huggingface.co/spaces/raksha-16-2005/email-retrieval-rag)
+— public Enron corpus only, ZeroGPU. Latency there is not the latency reported
+below; see the demo's own README for why.
+
 Every number below is measured on one machine and reproducible with
 `make bench`. The eval set is published in [`data/eval/`](data/eval/) so the
 tables can be checked independently.

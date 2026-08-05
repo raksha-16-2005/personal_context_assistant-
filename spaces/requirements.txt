@@ -22,5 +22,10 @@ bm25s==0.2.13
 PyStemmer==2.2.0.3
 scipy<1.15
 
-pyarrow==17.0.0
+# A floor, not a pin: sentence-transformers/transformers are unpinned above, so
+# whichever `datasets` version they pull in decides the real pyarrow floor (it
+# started needing pa.json_(), which 17.0.0 predates). Pinning pyarrow exactly
+# is the same mistake this file already avoids for torch - it breaks the
+# moment something else transitively wants a newer one.
+pyarrow>=17.0.0
 PyYAML==6.0.2
