@@ -6,9 +6,12 @@ Every number below is measured on one machine and reproducible with
 `make bench`. The eval set is published in [`data/eval/`](data/eval/) so the
 tables can be checked independently.
 
-> **Status: in progress.** Tables are empty until the corresponding stage
-> lands. Empty cells are honest — nothing here is a placeholder for a number
-> that was assumed.
+> **Status: pilot results.** Tables below are real, but measured on a 26-query
+> pilot (24 answerable + 2 unanswerable) — not yet the full 80-query eval set
+> the plan targets. Read differences under ~0.02 nDCG as noise; the pilot's
+> purpose is to catch harness bugs before scaling the eval set, not to be the
+> final word. Empty cells are honest — nothing here is a placeholder for a
+> number that was assumed.
 
 ## Try it
 
@@ -53,29 +56,50 @@ environment where the pin does not apply.
 
 ### Dimension 1 — Chunking
 
+Retriever fixed to hybrid-weighted (the dimension-3 winner) so chunking varies alone.
+
 | Strategy | R@5 | R@20 | MRR | nDCG@10 |
 |---|---|---|---|---|
-| Fixed 512 | | | | |
-| Fixed 512 + 64 overlap | | | | |
-| Thread-aware | | | | |
-| Whole message | | | | |
+| Fixed 512 | 0.605 | 0.812 | 0.471 | **0.499** |
+| Fixed 512 + 64 overlap | 0.508 | 0.760 | 0.482 | 0.427 |
+| Thread-aware | 0.591 | 0.715 | 0.427 | 0.478 |
+| Whole message | 0.487 | 0.715 | 0.424 | 0.409 |
+
+`fixed_512` edges out `thread_aware` here, but on 24 answerable queries that
+0.02 gap is inside the noise floor — not a result yet, a direction to
+re-check once the eval set is bigger.
 
 ### Dimension 2 — Embedding model
 
 | Model | dim | R@20 | nDCG@10 | index MB | encode docs/s |
 |---|---|---|---|---|---|
-| all-MiniLM-L6-v2 | 384 | | | | 67.2 |
-| bge-small-en-v1.5 | 384 | | | | 34.5 |
-| bge-base-en-v1.5 | 768 | | | | 9.8 |
+| all-MiniLM-L6-v2 | 384 | **0.715** | **0.478** | 88.7 | 67.2 |
+| bge-small-en-v1.5 | 384 | 0.471 | 0.326 | 88.7 | 34.5 |
+| bge-base-en-v1.5 | 768 | 0.478 | 0.331 | 177.5 | 9.8 |
+
+**Surprising, and held loosely: both bge models score well below MiniLM here,**
+despite bge generally outperforming MiniLM on published retrieval
+benchmarks. Query-side instructions are applied correctly for both bge
+models (`embed.py`'s `QUERY_INSTRUCTION`), so this isn't the obvious
+instruction-prefix bug. Candidate explanations not yet checked: bge's
+training distribution may generalise worse to messy forwarded-email text
+than MiniLM's, or 26 queries may simply be too few to trust a 0.15-point
+nDCG gap. Reported as measured, not as a verified conclusion — re-check once
+the eval set is bigger before citing this either way.
 
 ### Dimension 3 — Retriever
 
+Pivot config: `thread_aware` / `all-MiniLM-L6-v2`.
+
 | Configuration | R@5 | R@20 | MRR | nDCG@10 | p95 ms |
 |---|---|---|---|---|---|
-| BM25 only | | | | | |
-| Dense only | | | | | |
-| Hybrid — RRF | | | | | |
-| Hybrid — weighted | | | | | |
+| BM25 only | 0.417 | 0.467 | 0.441 | 0.391 | 4 |
+| Dense only | 0.454 | 0.572 | 0.535 | 0.491 | 30 |
+| Hybrid — RRF | 0.386 | 0.624 | 0.345 | 0.365 | 32 |
+| Hybrid — weighted | **0.591** | **0.715** | 0.427 | **0.478** | 30 |
+
+Weighted fusion beats every single-retriever baseline, on every chunking
+strategy tried in dimension 1 — the one consistent story in this pilot.
 
 ### Dimension 4 — Reranking
 
@@ -84,11 +108,21 @@ latency column is already measured, and it decided the arms.
 
 | Rerank arm | nDCG@10 | ΔnDCG | rerank p50 ms | in 200 ms budget |
 |---|---|---|---|---|
-| none (baseline) | | — | — | yes |
-| L-6 @ top-20, 512 tok | | | 628 | no |
-| L-6 @ top-20, 192 tok | | | 381 | no |
-| L-2 @ top-20, 192 tok | | | 158 | **yes** |
+| none (baseline) | 0.365 | — | — | yes |
+| L-6 @ top-20, 512 tok | 0.348 | -0.018 | 628 | no |
+| L-6 @ top-20, 192 tok | 0.347 | -0.018 | 381 | no |
+| L-2 @ top-20, 192 tok | 0.326 | -0.039 | 158 | **yes** |
 | L-6 @ top-50, 512 tok *(offline ceiling)* | | | 2,730 | no |
+
+**Pilot finding, held loosely: every rerank arm *lowers* nDCG@10 here.**
+On 24 answerable queries this is as likely to be noise as signal — the
+ΔnDCG spread (-0.018 to -0.039) is inside what a bigger eval set could easily
+flip. Worth re-running once the eval set scales past the pilot; not worth
+concluding anything from yet. (Rerank p50 figures above are the
+previously-measured clean baseline; this pilot's own bench-rerank run
+happened while `index-d2` was building concurrently in the background, which
+inflates raw latency — quality metrics are unaffected by that contention,
+latency numbers from a loaded machine are not comparable to an idle one.)
 
 Two negative results came out of building this, both measured:
 
@@ -110,10 +144,14 @@ passage length; the full grid is in `runs/rerank_budget.json`.
 
 | Transform | fired | degraded | runs/query | nDCG@10 | ΔnDCG | llm calls |
 |---|---|---|---|---|---|---|
-| none (baseline) | — | — | 1 | | — | 0 |
-| HyDE | | | 1 | | | 1/query |
-| Multi-query expansion | | | 4 | | | 1/query |
-| Decomposition | | | 1–4 | | | 1/query |
+| none (baseline) | — | — | 1 | 0.365 | — | 0 |
+| HyDE | 17/26 | 9 | 1 | 0.338 | -0.027 | 17 |
+| Multi-query expansion | 26/26 | 0 | 4 | 0.319 | -0.046 | 26 |
+| Decomposition | 7/26 | 18 | 4 | 0.370 | +0.005 | 8 |
+
+None of the three clearly help on this pilot — decompose is roughly flat
+(and fired on only 7 of 26 queries), HyDE and multi-query both hurt. Same
+noise caveat as dimension 4 applies; 26 queries is thin.
 
 `fired` and `degraded` are columns, not footnotes: a transform that quietly fell
 back to the original query on a third of the eval set would otherwise report the
@@ -126,32 +164,99 @@ file, with no retrieval re-run: `bad_label`, `chunk_boundary`, `temporal`,
 `multi_hop`, `vocabulary`, `ranking`. `make failures` prints the counts plus a
 worklist with the evidence for each. Counts land here once the eval set exists.
 
+**Pilot (26 queries): 6 of 24 answerable queries miss at recall@20** — 1
+`temporal` (a "relative to" phrasing ranked at #26-27), 5 `vocabulary` (few
+shared terms between query and message). No `chunk_boundary`, `multi_hop`, or
+`ranking` misses showed up in this small a sample. `bad_label` is never
+assigned automatically, per the rule above.
+
 `bad_label` is the one category never assigned automatically — a system that can
 file its own failures as mislabelled is grading its own exam.
 
 ### Generation
 
 Answer synthesis with citations is **built and working** (`make serve`,
-`make ask`). What is not yet built is the *measurement* of it:
+`make ask`), and so is the judge (`generation/judge.py`, `make
+eval-generation`) — but a bug meant the first two attempts at this table
+measured a quota outage instead of the system: the judge pinned an explicit
+model name, which (by `llm/client.py`'s own design) disables the automatic
+Gemini quota-rotation every other caller in this codebase gets, so one 429
+failed every remaining verdict "unsupported" rather than falling through to
+`gemini-3.5-flash`. Fixed in `judge.py`; numbers below are from the run after
+the fix, on the 26-query pilot:
 
-| Metric | status |
-|---|---|
-| Refusal rate on the 10 unanswerable controls | needs the labelled eval set |
-| Groundedness / faithfulness | needs a judge (`generation/judge.py`) |
-| Citation accuracy | needs a judge |
-| Answer relevance | needs a judge |
-| Cohen's κ, judge vs 50 hand-labelled answers | needs the hand labels |
+| Metric | Value | n |
+|---|---|---|
+| Groundedness | 0.088 | 36 claims |
+| Citation accuracy | 0.088 | 36 cited claims |
+| Answer relevance | 1.000 | 2 answers |
+| Refusal rate on unanswerable controls | 1.000 | 2 controls |
+| Fabricated-citation rate | 0.000 | 17 answers |
+| Refused an answerable query | 7 | 24 answerable |
 
-Two structural checks run on every answer today, without a judge: citation
-markers are validated against the sources actually supplied, so a fabricated
-`[7]` is surfaced instead of rendered as a working link; and sentences that
-assert something without citing anything are flagged. Neither is a substitute for
-a groundedness metric — they only catch the failures visible without reading the
-sources.
+**Uncalibrated** — no hand labels have been compared against the judge yet,
+so read groundedness/citation accuracy as one model's opinion of another's,
+not a settled number. Two things worth flagging rather than quietly
+reporting: groundedness at 0.088 is low even for a thin sample, and 7 of 24
+answerable queries were refused this run against only 1 in an earlier run on
+the same eval set and config — worth a closer look before this table is
+treated as final. Answer relevance and refusal-on-controls both look
+correct (2/2 controls now correctly refused, up from 0/2 previously) but
+rest on an n of 2.
+
+Cohen's κ against 50 hand-labelled verdicts is the next step and is
+deliberately not faked here — see `generation/judge.py`'s own module
+docstring: *"an uncalibrated instrument reports precision it has not
+earned."* `--kappa` on `eval_generation.py` computes it once
+`data/eval/answer_labels.jsonl` exists.
+
+Two structural checks run on every answer without a judge: citation markers
+are validated against the sources actually supplied, so a fabricated `[7]`
+is surfaced instead of rendered as a working link; and sentences that assert
+something without citing anything are flagged. Neither is a substitute for a
+groundedness metric — they only catch the failures visible without reading
+the sources.
 
 ### Router
 
-Not yet built. See [the plan](plan.html).
+Temporal/aggregate questions route to SQL over extracted commitments, semantic
+questions route to hybrid search, and abstention resolves to `both` — see
+[the plan](plan.html) for why. Pilot numbers, 24 scoreable queries (the 2
+unanswerable controls excluded — there is no right arm for a question with no
+answer):
+
+| Query class | n | routed correctly |
+|---|---|---|
+| semantic | 8 | 1.000 |
+| entity | 7 | 1.000 |
+| temporal | 9 | 0.667 |
+| **overall** | 24 | **0.875** |
+
+Decided by rules 58% of the time, an LLM call on abstention the other 42%,
+default-`both` 0%. The three temporal misses all had genuine date content but
+got routed to `hybrid` instead of `sql`/`both` — content-vs-commitment framing
+("who sent X on date Y" reads as a content lookup, not a commitment query) is
+where the router's rules and its LLM fallback both currently agree, and agree
+wrong. That the router's weak point is exactly the class it exists to catch is
+the pilot's most useful finding so far, small as the sample is.
+
+### Serving: pgvector / HNSW recall loss
+
+Ablations above use exact search deliberately (see design decisions below);
+the served system runs HNSW via pgvector, and this is the gap between them,
+swept over `ef_search` on the pivot config:
+
+| ef_search | recall@20 vs exact | worst query | top-1 agreement | p50 ms | p95 ms |
+|---|---|---|---|---|---|
+| 40 | 0.792 | 0.100 | 0.885 | 1.8 | 2.7 |
+| 100 | 0.917 | 0.700 | 0.923 | 2.2 | 2.6 |
+| 200 | 0.962 | 0.750 | 0.923 | 3.6 | 4.5 |
+| 400 | 0.989 | 0.950 | 0.962 | 5.7 | 6.8 |
+
+At `ef_search=40` one query in this pilot loses 90% of its exact-search
+recall while the average looks fine (0.792) — the mean hides it. `ef_search=200`
+is the first setting where even the worst query holds onto most of its
+recall, at a p95 of 4.5 ms; still well under the 200 ms generation budget.
 
 ## Design decisions worth arguing with
 

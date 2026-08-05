@@ -73,7 +73,7 @@ $(MAILDIR): $(TARBALL)
 	@touch $@
 
 corpus: $(MESSAGES) ## parse -> dedup -> bulk filter -> Parquet
-$(MESSAGES): $(MAILDIR) scripts/build_corpus.py
+$(MESSAGES): scripts/build_corpus.py | $(MAILDIR)
 	$(PY) scripts/build_corpus.py --maildir $(MAILDIR) --out $@
 
 sample: $(SAMPLE) ## thread reconstruction + stratified ablation subsample

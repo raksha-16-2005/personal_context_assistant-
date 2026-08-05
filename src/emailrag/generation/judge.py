@@ -163,7 +163,12 @@ class GenerationJudge:
     def __init__(self, llm: LLM | None = None, model: str | None = None) -> None:
         # A separate client, and a separately named model. See the module docstring.
         self._llm = llm
-        self._model = model or DEFAULT_JUDGE_MODEL
+        # Left None unless the caller pins one explicitly: `LLM`'s Gemini quota
+        # rotation (client.py's `_fallbacks`) only activates when `model is
+        # None`, and the judge needs that rotation exactly as much as the
+        # generator does - a pinned model here means one exhausted quota kills
+        # every remaining verdict instead of falling through to the next model.
+        self._model = model
 
     @property
     def llm(self) -> LLM:
@@ -173,7 +178,7 @@ class GenerationJudge:
 
     @property
     def judge_model(self) -> str:
-        return getattr(self.llm, "model", self._model)
+        return getattr(self.llm, "model", self._model or DEFAULT_JUDGE_MODEL)
 
     def score(self, answer: Answer, question: str | None = None,
               judge_relevance: bool = True) -> AnswerScore:

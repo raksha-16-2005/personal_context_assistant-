@@ -268,14 +268,103 @@ non-unit-length rows, because `DenseIndex` treats the dot product *as* the cosin
 
 ## Results
 
-*Populated by `make bench`. Empty until the pilot runs.*
+**Pilot run: 26 queries (24 answerable + 2 unanswerable), hand-verified —
+not yet the full 80-query set section 5's stratification targets.** Read
+this as "the harness produces sane numbers," not as a final result. Per
+section 11, differences under ~0.02 nDCG here should be read as noise; with
+24 answerable queries that threshold is generous, not conservative.
 
 ### Retriever comparison
 
+Pivot config: `thread_aware` / `all-MiniLM-L6-v2`.
+
+| Configuration | R@5 | R@20 | MRR | nDCG@10 | p95 ms |
+|---|---|---|---|---|---|
+| BM25 only | 0.417 | 0.467 | 0.441 | 0.391 | 4 |
+| Dense only | 0.454 | 0.572 | 0.535 | 0.491 | 30 |
+| Hybrid — RRF | 0.386 | 0.624 | 0.345 | 0.365 | 32 |
+| Hybrid — weighted (0.5/0.5, untuned per section 7) | 0.591 | 0.715 | 0.427 | 0.478 | 30 |
+
+Weighted fusion wins on every chunking strategy tried (dimension 1), the one
+consistent signal in this pilot.
+
 ### Reranking — nDCG gain against added latency
+
+| Rerank arm | nDCG@10 | ΔnDCG | rerank p50 ms |
+|---|---|---|---|
+| none (baseline) | 0.365 | — | — |
+| L-6 @ top-20, 512 tok | 0.348 | -0.018 | 628 |
+| L-6 @ top-20, 192 tok | 0.347 | -0.018 | 381 |
+| L-2 @ top-20, 192 tok | 0.326 | -0.039 | 158 |
+
+Every arm lowers nDCG@10 on this pilot. Given the sample size this is not
+read as "reranking fails here" — it is read as "re-run once the eval set is
+bigger before concluding anything." Latency column is the previously
+clean-measured baseline; this session's own rerank run shared the CPU with
+`index-d2` building concurrently, so its raw latency readings are not used
+here (quality metrics are unaffected by concurrent load, latency is).
 
 ### Query transformation — including the arms that lose
 
+| Transform | fired | degraded | nDCG@10 | ΔnDCG | llm calls |
+|---|---|---|---|---|---|
+| none (baseline) | — | — | 0.365 | — | 0 |
+| HyDE | 17/26 | 9 | 0.338 | -0.027 | 17 |
+| Multi-query expansion | 26/26 | 0 | 0.319 | -0.046 | 26 |
+| Decomposition | 7/26 | 18 | 0.370 | +0.005 | 8 |
+
+Decompose is roughly flat and fired on only 7 of 26 queries (mostly
+degrading to the baseline query); HyDE and multi-query both hurt. Per
+section 9, `fired`/`degraded` are reported precisely so a quietly-degraded
+transform cannot claim the baseline's numbers under its own name.
+
 ### Per-class breakdown
 
+BM25, pivot config — the case section 4's stratification exists to isolate:
+
+| Query class | n | R@5 | R@20 | MRR | nDCG@10 |
+|---|---|---|---|---|---|
+| entity | 7/7 | 0.800 | 0.893 | 0.536 | 0.563 |
+| semantic | 8/8 | 0.438 | 0.750 | 0.372 | 0.403 |
+| temporal | 9/9 | 0.602 | 0.806 | 0.508 | 0.534 |
+| unanswerable | 0/2 | — | — | — | — |
+
+The stratification counts (8/9/7/2) are what's labelled so far, not the
+plan's targets (35/25/10/10) — see the warning `make bench` prints.
+
 ### Failure taxonomy
+
+6 of 24 answerable queries miss at recall@20 in this pilot:
+
+| Category | n | share of misses |
+|---|---|---|
+| temporal | 1 | 17% |
+| vocabulary | 5 | 83% |
+
+No `chunk_boundary`, `multi_hop`, or `ranking` misses appeared at this
+sample size. 5 of the 6 vocabulary misses report "no message text available"
+for the term-overlap measurement — a consequence of thread-aware chunking
+bundling multiple messages into one chunk under a single anchor dedup_key
+(section on chunk storage in the README), not a defect in the labels
+themselves. `bad_label` was not assigned to any query — see section 3's
+rule that a system does not get to grade its own labels.
+
+### HNSW recall loss (pgvector), pivot config
+
+Section 6 explains why the ablation itself uses exact search. This is the
+number that search decision was deferring — how much recall pgvector's HNSW
+index actually gives up against it, at each `ef_search`:
+
+| ef_search | recall@20 vs exact | worst query | top-1 agreement | p50 ms | p95 ms |
+|---|---|---|---|---|---|
+| 40 | 0.792 | 0.100 | 0.885 | 1.8 | 2.7 |
+| 100 | 0.917 | 0.700 | 0.923 | 2.2 | 2.6 |
+| 200 | 0.962 | 0.750 | 0.923 | 3.6 | 4.5 |
+| 400 | 0.989 | 0.950 | 0.962 | 5.7 | 6.8 |
+
+"Recall" here means agreement with exact search, not relevance — a chunk
+exact search never surfaces cannot be recovered by an approximate index
+either. `ef_search=40`'s worst-query recall (0.10) says the default is too
+low for at least one query in a 26-query pilot; `ef_search=200` is the
+first setting where the worst case clears 0.7. Latency is CPU-specific, see
+HARDWARE.md.

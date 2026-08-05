@@ -227,8 +227,9 @@ def parse_user_dir(args: tuple[Path, Path]) -> list[dict]:
     """Worker entry point - one maildir user per task."""
     user_dir, maildir_root = args
     out: list[dict] = []
-    for dirpath, _dirnames, filenames in os.walk(user_dir):
-        for fn in filenames:
+    for dirpath, dirnames, filenames in os.walk(user_dir):
+        dirnames.sort()
+        for fn in sorted(filenames):
             if fn.startswith("."):
                 continue
             msg = parse_file(Path(dirpath) / fn, maildir_root)
@@ -238,7 +239,8 @@ def parse_user_dir(args: tuple[Path, Path]) -> list[dict]:
 
 
 def iter_all_files(maildir_root: Path) -> Iterator[Path]:
-    for dirpath, _dirnames, filenames in os.walk(maildir_root):
-        for fn in filenames:
+    for dirpath, dirnames, filenames in os.walk(maildir_root):
+        dirnames.sort()
+        for fn in sorted(filenames):
             if not fn.startswith("."):
                 yield Path(dirpath) / fn

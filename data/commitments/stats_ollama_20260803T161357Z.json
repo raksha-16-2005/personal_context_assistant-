@@ -1,0 +1,20 @@
+{
+  "provider": "ollama",
+  "model": "qwen2.5:3b",
+  "scope": "eval",
+  "since": "",
+  "prefilter": true,
+  "messages_seen": 65,
+  "messages_prefiltered_out": 23,
+  "messages_called": 42,
+  "commitments": 13,
+  "with_due_date": 12,
+  "ambiguous_dates": 0,
+  "rolled_year": 0,
+  "unresolvable_phrases": 0,
+  "invalid_rows": 0,
+  "failures": 0,
+  "cached_calls": 3,
+  "prefilter_pass_rate": 0.6462,
+  "seconds": 1324.6
+}
