@@ -72,6 +72,21 @@ def test_missing_key_names_the_setup_steps():
     assert ".env" in msg
 
 
+def test_an_explicit_api_key_needs_no_env_var():
+    # The multi-tenant web app passes each user's own pasted key; it must not
+    # need a matching GEMINI_API_KEY in this process's environment at all.
+    llm = LLM("gemini", api_key="user-pasted-key")
+    assert llm.key == "user-pasted-key"
+
+
+def test_an_explicit_api_key_wins_over_the_environment(monkeypatch):
+    # Explicit always wins: a per-request key must not be silently shadowed by
+    # whatever happens to be in this process's own .env/environment.
+    monkeypatch.setenv("GEMINI_API_KEY", "process-wide-key")
+    llm = LLM("gemini", api_key="user-pasted-key")
+    assert llm.key == "user-pasted-key"
+
+
 def test_unknown_provider_is_rejected():
     with pytest.raises(LLMError, match="unknown provider"):
         LLM("telepathy")

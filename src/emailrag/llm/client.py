@@ -79,12 +79,21 @@ class Provider:
 # nothing about the others - `gemini-2.0-flash` and `-2.0-flash-lite` were
 # already exhausted on this key while 2.5/3.5 answered fine. If the default
 # throttles, pass --model rather than assuming the key is spent:
-#   gemini-2.5-flash  gemini-3.5-flash  gemini-flash-lite-latest
+#   gemini-2.5-flash  gemini-flash-lite-latest  gemini-3.5-flash
+#
+# `gemini-3.5-flash` is last, not second, despite being newer: given the exact
+# same prompt and sources, it consistently (4/4 in isolation) answers
+# INSUFFICIENT_CONTEXT where `gemini-2.5-flash` and `gemini-flash-lite-latest`
+# both answer correctly - caught via a live webapp query ("what should I
+# prioritize today") that had exactly one clearly-relevant citation. Whatever
+# makes it more conservative on this system prompt, it is a worse fallback
+# than flash-lite, so it only gets tried once both of the better options are
+# exhausted.
 #
 # Pinned version, deliberately. `gemini-flash-latest` also works but would
 # silently change model between runs, and every table here is supposed to be
 # reproducible from the published eval set.
-GEMINI_FALLBACKS = ("gemini-2.5-flash", "gemini-3.5-flash", "gemini-flash-lite-latest")
+GEMINI_FALLBACKS = ("gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-3.5-flash")
 
 PROVIDERS = {
     "gemini": Provider("gemini", "GEMINI_API_KEY", "gemini-2.5-flash",
@@ -148,7 +157,8 @@ class QuotaExhausted(LLMError):
 class LLM:
     def __init__(self, provider: str = DEFAULT, model: str | None = None,
                  temperature: float = 0.0, auto_fallback: bool = True,
-                 cache: ResponseCache | None = None, use_cache: bool = True) -> None:
+                 cache: ResponseCache | None = None, use_cache: bool = True,
+                 api_key: str | None = None) -> None:
         if provider not in PROVIDERS:
             raise LLMError(f"unknown provider {provider!r}; have {sorted(PROVIDERS)}")
         self.spec = PROVIDERS[provider]
@@ -173,7 +183,12 @@ class LLM:
         self._fallbacks = list(GEMINI_FALLBACKS) if (
             auto_fallback and provider == "gemini" and model is None) else []
         self._exhausted: set[str] = set()
-        self.key = os.environ.get(self.spec.env_var, "") if self.spec.env_var else ""
+        # An explicit key (e.g. a user's own pasted Gemini key in the web app)
+        # always wins over the environment. Falling back to the env var keeps
+        # every existing caller - eval scripts, the judge, the router - working
+        # unchanged, since none of them pass `api_key`.
+        env_key = os.environ.get(self.spec.env_var, "") if self.spec.env_var else ""
+        self.key = api_key or env_key
         if self.spec.env_var and not self.key:
             raise MissingKey(
                 f"{self.spec.env_var} is not set.\n"
