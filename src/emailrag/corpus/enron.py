@@ -17,6 +17,7 @@ import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from email import policy
+from email.header import decode_header
 from email.parser import BytesParser
 from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
@@ -72,17 +73,32 @@ def _decode(raw: bytes) -> str:
 
 
 def _hdr(msg, name: str) -> str:
-    """Read a header as a plain str.
+    """Read a header as a plain, decoded str.
 
     Under compat32, `msg.get()` usually returns a str - but for a header
-    containing RFC 2047 encoded words it returns an `email.header.Header`
-    instead, which has no string methods. Enron has enough of those to crash a
-    full parse, so every header read goes through here.
+    containing RFC 2047 encoded words (`=?Windows-1252?Q?...?=`) it returns an
+    `email.header.Header` instead. Two problems, not one: that object has no
+    string methods (Enron has enough of those to crash a full parse), and
+    `str()` on it - the obvious fix - returns the encoded form verbatim,
+    since compat32 never decodes headers on its own. Every header read goes
+    through `decode_header` so a real subject shows up instead of literal
+    `=?...?=` gibberish in citations.
     """
     value = msg.get(name)
     if value is None:
         return ""
-    return value if isinstance(value, str) else str(value)
+    raw = value if isinstance(value, str) else str(value)
+    try:
+        parts = decode_header(raw)
+    except (UnicodeDecodeError, LookupError, ValueError):
+        return raw
+    decoded = []
+    for part, charset in parts:
+        if isinstance(part, bytes):
+            decoded.append(part.decode(charset or "utf-8", errors="replace"))
+        else:
+            decoded.append(part)
+    return "".join(decoded)
 
 
 def _addr_list(value: str | None) -> str:

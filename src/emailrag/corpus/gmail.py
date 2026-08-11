@@ -35,10 +35,12 @@ from __future__ import annotations
 import base64
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -50,6 +52,13 @@ AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 # The narrowest scope that still allows reading mail. There is no read-only scope
 # limited to a subset of the mailbox.
 SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+
+# The web app's calendar-suggestions flow needs to create events once a user
+# confirms one (see the plan's "suggest, then user confirms" decision) - a
+# separate constant, not folded into SCOPE, because the desktop-app flow
+# (scripts/gmail_auth.py) has no calendar feature and must keep asking for
+# Gmail only.
+CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 
 # Google's documented behaviour for apps in Testing. Recorded here so the warning
 # can be specific instead of "your token stopped working".
@@ -74,31 +83,19 @@ class HistoryTooOld(GmailError):
 
 # -- tokens -----------------------------------------------------------------
 
-@dataclass
-class TokenStore:
-    """OAuth tokens on disk, 0600, outside the repo.
+class TokenStoreBase:
+    """Token-freshness logic shared by every storage backend.
 
-    Outside the repo deliberately: `.gitignore` is a convention and a `git add -f`
-    or a moved path defeats it. A token that can read an entire mailbox should not
-    be one mistake away from a public commit, so it lives under ~/.config by
-    default and the repo never has to be trusted with it.
+    Everything here reads or computes from `self.data` alone, so it is
+    identical whichever backend holds the bytes. `TokenStore` below persists
+    to a local JSON file, for the single-user desktop-app flow
+    `scripts/gmail_auth.py` drives. The multi-tenant web app's
+    `DbTokenStore` (`webapp/app/tokens/store.py`) persists an encrypted row
+    per user in Postgres instead - same interface, so `GmailClient` needs no
+    changes to run against either one.
     """
 
-    path: Path = field(default_factory=lambda: DEFAULT_TOKEN_PATH)
-    data: dict = field(default_factory=dict)
-
-    def load(self) -> "TokenStore":
-        if self.path.exists():
-            self.data = json.loads(self.path.read_text())
-        return self
-
-    def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        # Written 0600 before any content lands in it, so the secret is never
-        # briefly world-readable.
-        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as fh:
-            json.dump(self.data, fh, indent=2)
+    data: dict
 
     @property
     def refresh_token(self) -> str:
@@ -144,17 +141,58 @@ class TokenStore:
         return ""
 
 
-def authorization_url(client_id: str, redirect_uri: str = "http://localhost:8765/") -> str:
+@dataclass
+class TokenStore(TokenStoreBase):
+    """OAuth tokens on disk, 0600, outside the repo.
+
+    Outside the repo deliberately: `.gitignore` is a convention and a `git add -f`
+    or a moved path defeats it. A token that can read an entire mailbox should not
+    be one mistake away from a public commit, so it lives under ~/.config by
+    default and the repo never has to be trusted with it.
+    """
+
+    path: Path = field(default_factory=lambda: DEFAULT_TOKEN_PATH)
+    data: dict = field(default_factory=dict)
+
+    def load(self) -> "TokenStore":
+        if self.path.exists():
+            self.data = json.loads(self.path.read_text())
+        return self
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        # Written 0600 before any content lands in it, so the secret is never
+        # briefly world-readable.
+        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            json.dump(self.data, fh, indent=2)
+
+
+def authorization_url(client_id: str, redirect_uri: str = "http://localhost:8765/",
+                      scopes: str = SCOPE, state: str = "") -> str:
     """The consent URL. `access_type=offline` is what yields a refresh token at
-    all; without `prompt=consent` Google omits it on re-authorisation."""
+    all; without `prompt=consent` Google omits it on re-authorisation.
+
+    `scopes` is a space-separated list of scope URIs, defaulting to Gmail-only
+    for the desktop-app flow. The web app passes `f"{SCOPE} {CALENDAR_SCOPE}"`
+    so both grants happen on one consent screen.
+
+    `state`, when given, is echoed back on the callback unmodified - the web
+    app's CSRF defence against a browser being tricked into completing login
+    with an attacker-supplied authorization code. The desktop loopback flow
+    (localhost-only, single machine) has never needed it, so it stays opt-in
+    rather than mandatory.
+    """
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": SCOPE,
+        "scope": scopes,
         "access_type": "offline",
         "prompt": "consent",
     }
+    if state:
+        params["state"] = state
     return f"{AUTH_URL}?{urllib.parse.urlencode(params)}"
 
 
@@ -224,6 +262,39 @@ class SyncState:
         }, indent=2))
 
 
+def ensure_access_token(client_id: str, client_secret: str,
+                        tokens: TokenStoreBase) -> str:
+    """A valid bearer token for `tokens`' account, refreshing and persisting
+    if the cached access token has expired.
+
+    One access token is valid for every scope its refresh token was granted -
+    Gmail and Calendar alike - so this is not Gmail-specific despite living in
+    this module; `GmailClient._bearer` and the web app's `CalendarClient`
+    (`webapp/app/calendar/client.py`) both call it against the same
+    `DbTokenStore` row rather than each refreshing (and re-persisting) their
+    own copy.
+    """
+    if tokens.access_token_valid():
+        return tokens.access_token
+    if not tokens.refresh_token:
+        raise NeedsAuthorization(
+            "no refresh token stored.\n  run: python scripts/gmail_auth.py")
+
+    fresh = refresh_access_token(client_id, client_secret, tokens.refresh_token)
+    tokens.data.update({
+        "access_token": fresh["access_token"],
+        "expires_at": time.time() + int(fresh.get("expires_in", 3600)),
+    })
+    # issued_at tracks the *refresh* token's age, so it is only set when a new
+    # refresh token arrives - overwriting it on every access-token refresh
+    # would hide the 7-day clock entirely.
+    if fresh.get("refresh_token"):
+        tokens.data["refresh_token"] = fresh["refresh_token"]
+        tokens.data["issued_at"] = time.time()
+    tokens.save()
+    return tokens.access_token
+
+
 class GmailClient:
     def __init__(self, client_id: str, client_secret: str,
                  tokens: TokenStore | None = None) -> None:
@@ -240,30 +311,20 @@ class GmailClient:
         self.client_id = client_id
         self.client_secret = client_secret
         self.tokens = (tokens or TokenStore()).load()
+        # `fetch_messages` below calls `_bearer()` from many threads at once
+        # against this one client/token pair. The lock only ever guards the
+        # cheap "is the cached token still valid" check (and, rarely, the
+        # actual refresh call) - the slow part, the per-message HTTP GET in
+        # `_get`, happens after `_bearer()` has already returned, outside
+        # this lock, so this does not serialize the concurrency it's meant
+        # to allow.
+        self._bearer_lock = threading.Lock()
 
     # -- auth ----------------------------------------------------------------
 
     def _bearer(self) -> str:
-        if self.tokens.access_token_valid():
-            return self.tokens.access_token
-        if not self.tokens.refresh_token:
-            raise NeedsAuthorization(
-                "no refresh token stored.\n  run: python scripts/gmail_auth.py")
-
-        fresh = refresh_access_token(self.client_id, self.client_secret,
-                                     self.tokens.refresh_token)
-        self.tokens.data.update({
-            "access_token": fresh["access_token"],
-            "expires_at": time.time() + int(fresh.get("expires_in", 3600)),
-        })
-        # issued_at tracks the *refresh* token's age, so it is only set when a new
-        # refresh token arrives - overwriting it on every access-token refresh
-        # would hide the 7-day clock entirely.
-        if fresh.get("refresh_token"):
-            self.tokens.data["refresh_token"] = fresh["refresh_token"]
-            self.tokens.data["issued_at"] = time.time()
-        self.tokens.save()
-        return self.tokens.access_token
+        with self._bearer_lock:
+            return ensure_access_token(self.client_id, self.client_secret, self.tokens)
 
     def _get(self, path: str, params: dict | None = None, retries: int = 4) -> dict:
         url = f"{API}{path}"
@@ -384,17 +445,55 @@ def since_query(days: int) -> str:
     return f"after:{cutoff.strftime('%Y/%m/%d')}"
 
 
+def before_query(days: int) -> str:
+    """The complementary half of `since_query` - everything *older* than the
+    recent window, for the multi-tenant web app's staged first sync
+    (`webapp/app/ingestion/worker.py`'s `RECENT_SYNC_DAYS`/
+    `backfill_history`): fetch the last `days` fast so a new user has
+    something to chat with in about a minute, then backfill everything
+    before that cutoff in the background without re-fetching what the fast
+    pass already has.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    return f"before:{cutoff.strftime('%Y/%m/%d')}"
+
+
+# One `raw_message` call measured at ~500 ms against real Gmail - almost
+# entirely spent waiting on the network, not on this process's CPU. Fetching
+# serially therefore wastes nearly the entire wall clock idle; a mailbox of
+# 9k messages measured at ~80 minutes serially and a few minutes at this
+# concurrency. Gmail's per-user quota is 250 quota units/s and messages.get
+# costs 5, so ~50 req/s is the hard ceiling - 20 workers at ~500 ms each is
+# ~40 req/s, comfortably under it rather than riding the edge, since a 429
+# there costs more in backoff (`GmailClient._get`'s `2**attempt` sleep) than
+# the extra concurrency would have saved.
+FETCH_WORKERS = 20
+
+
 def fetch_messages(client: GmailClient, query: str = "", max_messages: int = 0,
-                   on_progress=None) -> list[dict]:
+                   on_progress=None, max_workers: int = FETCH_WORKERS) -> list[dict]:
     """Fetch and parse into the same `Message` rows `enron.py` produces.
 
     The parser is imported from `enron.py` rather than reimplemented: identical
     parsing is what makes any difference between the two corpora a difference in
     the mail rather than in the code.
+
+    Fetched concurrently (see `FETCH_WORKERS`) - order is not preserved, which
+    is fine: nothing downstream (dedup, threading, chunking) depends on the
+    order messages arrive in.
     """
     from dataclasses import asdict
 
     from .enron import parse_message
+
+    def _fetch_one(message_id: str):
+        raw = client.raw_message(message_id)
+        return parse_message(raw, source_path=f"gmail:{message_id}")
+
+    # Materialized rather than left as a generator: a thread pool needs every
+    # id up front to submit work, and even a 100k-message mailbox is a
+    # trivial amount of memory as bare id strings.
+    message_ids = list(client.list_message_ids(query, max_messages))
 
     # Dicts, not `Message` objects: `parse_user_dir` returns dicts and the whole
     # downstream pipeline (dedup, filters, threading, Parquet) consumes dicts. A
@@ -402,17 +501,21 @@ def fetch_messages(client: GmailClient, query: str = "", max_messages: int = 0,
     # paths.
     out: list[dict] = []
     failures: list[str] = []
-    for i, message_id in enumerate(client.list_message_ids(query, max_messages), 1):
-        try:
-            raw = client.raw_message(message_id)
-            parsed = parse_message(raw, source_path=f"gmail:{message_id}")
-            if parsed is not None:
-                out.append(asdict(parsed))
-        except GmailError as exc:
-            # One unreadable message must not end a 35k-message sync.
-            failures.append(f"{message_id}: {exc}")
-        if on_progress and i % 50 == 0:
-            on_progress(i, len(out), len(failures))
+    completed = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_fetch_one, mid): mid for mid in message_ids}
+        for future in as_completed(futures):
+            message_id = futures[future]
+            completed += 1
+            try:
+                parsed = future.result()
+                if parsed is not None:
+                    out.append(asdict(parsed))
+            except GmailError as exc:
+                # One unreadable message must not end a 35k-message sync.
+                failures.append(f"{message_id}: {exc}")
+            if on_progress and completed % 50 == 0:
+                on_progress(completed, len(out), len(failures))
     if failures:
         print(f"  {len(failures)} message(s) could not be fetched; first: "
               f"{failures[0][:120]}")

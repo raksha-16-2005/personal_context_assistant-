@@ -122,6 +122,22 @@ def test_the_scope_is_readonly():
     assert G.SCOPE.endswith("gmail.readonly")
 
 
+def test_extra_scopes_can_be_requested_for_the_web_app():
+    # The web app's calendar-suggestions flow needs calendar.events on top of
+    # the desktop flow's gmail.readonly-only consent screen.
+    url = G.authorization_url("client-123", scopes=f"{G.SCOPE} {G.CALENDAR_SCOPE}")
+
+    assert "gmail.readonly" in url
+    assert "calendar.events" in url
+
+
+def test_the_desktop_flow_still_defaults_to_gmail_only():
+    url = G.authorization_url("client-123")
+
+    assert "gmail.readonly" in url
+    assert "calendar.events" not in url
+
+
 # -- the client -------------------------------------------------------------
 
 def test_missing_credentials_name_every_setup_step():
@@ -315,3 +331,13 @@ def test_the_since_query_is_a_gmail_search_expression():
     q = G.since_query(90)
     assert q.startswith("after:")
     assert len(q.split("after:")[1].split("/")) == 3
+
+
+def test_the_before_query_is_the_complementary_half_of_since_query():
+    # The staged first sync (webapp) fetches `since_query(N)` fast, then
+    # backfills `before_query(N)` in the background - the same cutoff date,
+    # the opposite direction, so together they cover the whole mailbox with
+    # no overlap and no gap.
+    since_cutoff = G.since_query(30).split("after:")[1]
+    before_cutoff = G.before_query(30).split("before:")[1]
+    assert since_cutoff == before_cutoff
