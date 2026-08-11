@@ -1,0 +1,18 @@
+# The web backend runs in the same process as the retrieval/generation code in
+# ../src/emailrag (PipelinePool loads real embedding/reranker models), so it
+# needs that stack's deps too. `-r` keeps the pin in one place rather than a
+# second copy that can drift.
+#
+# Verified on the project's own Intel-macOS dev machine: none of the packages
+# below touch torch/transformers/huggingface_hub, the three packages the root
+# requirements.txt pins tightly - so there is nothing here for them to
+# conflict with, on this machine or on a fresh deployment container.
+-r ../requirements.txt
+
+fastapi==0.141.1
+uvicorn==0.52.1
+cryptography==50.0.0
+itsdangerous==2.2.0
+
+# test client for the FastAPI app
+httpx==0.28.1
