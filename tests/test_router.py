@@ -18,7 +18,12 @@ from emailrag.router.classify import (
     routes_table,
     score_routes,
 )
-from emailrag.router.sql import filter_commitments, parse_window, window_sql
+from emailrag.router.sql import (
+    filter_commitments,
+    filter_messages_by_date,
+    parse_window,
+    window_sql,
+)
 
 TUE = date(2001, 10, 30)          # a Tuesday
 
@@ -40,6 +45,36 @@ def test_pure_date_questions_route_to_sql(query):
 
 
 @pytest.mark.parametrize("query", [
+    "what came in today",
+    "anything arriving tomorrow",
+])
+def test_bare_today_and_tomorrow_route_to_sql(query):
+    # "today"/"tomorrow" alone used to fall through to pure retrieval, which
+    # has no notion of "today" - parse_window already resolves both into a
+    # real window (see test_router's _WINDOWS coverage), the rules just never
+    # told the router to use it. These two have no content noun ("mail",
+    # "emails") for _SEMANTIC to catch, so they stay pure date questions.
+    assert classify_rules(query).name == "sql"
+
+
+@pytest.mark.parametrize("query", [
+    "what emails did I get today",
+    "summarize today's mail",
+    "what all mail did i get last week give me an abstract",
+])
+def test_today_or_this_week_plus_a_mail_summary_request_routes_to_both(query):
+    # The bug this guards against: these used to fall through to pure "sql"
+    # too, since nothing told the rules that "mail"/"summary"/"abstract"
+    # signal real content, not just a date filter. A pure "sql" route never
+    # runs retrieval, so a user asking this got back only whatever the date
+    # arms found (often an unrelated due-today commitment, or nothing) with
+    # no actual mail content - and, being neither "mail I received" nor
+    # substantive, the generator correctly refused rather than answer from
+    # it, which read as the system ignoring an otherwise-reasonable question.
+    assert classify_rules(query).name == "both"
+
+
+@pytest.mark.parametrize("query", [
     "how many commitments are open",
     "how much was the discount",
     "list all deadlines",
@@ -54,6 +89,25 @@ def test_aggregates_route_to_sql_whatever_else_they_contain(query):
 def test_an_aggregate_beats_a_semantic_signal():
     out = classify_rules("how many messages discuss the pricing model")
     assert out.name == "sql"
+
+
+@pytest.mark.parametrize("query", [
+    "what's most urgent",
+    "what's the most important thing right now",
+])
+def test_bare_superlatives_are_not_aggregate_phrasing(query):
+    # "most"/"fewest"/"busiest"/average used to be bare _AGGREGATE triggers,
+    # which always wins over every other signal by design ("aggregate is
+    # never retrieval"). But "most urgent" is a superlative retrieval
+    # genuinely answers by ranking, not a count - and nothing downstream
+    # ever implements "most/fewest" as a real SQL query either
+    # (router/sql.py's COUNT_SQL is defined but never called), so the only
+    # effect was guaranteeing an empty result for a question retrieval could
+    # have actually answered. `None` (the rules abstaining to the model) is
+    # a legitimate outcome here, just not "sql" via a false-positive
+    # aggregate match.
+    decision = classify_rules(query)
+    assert decision is None or decision.name != "sql"
 
 
 @pytest.mark.parametrize("query", [
@@ -186,6 +240,11 @@ def test_last_week_looks_backwards():
     assert (w.start, w.end) == (date(2001, 10, 22), date(2001, 10, 28))
 
 
+def test_yesterday_is_the_day_before_the_anchor():
+    w = parse_window("what mail did I get yesterday", TUE)
+    assert (w.start, w.end) == (date(2001, 10, 29), date(2001, 10, 29))
+
+
 def test_month_windows_span_the_whole_month():
     w = parse_window("due this month", TUE)
     assert (w.start, w.end) == (date(2001, 10, 1), date(2001, 10, 31))
@@ -301,6 +360,89 @@ def test_results_are_ordered_by_date_then_confidence():
     ], w)
 
     assert [c.text for c in out] == ["high", "low", "later"]
+
+
+# -- filtering messages by when they were *received*, not a due date --------
+
+def _msg(day: date, subject: str = "", hour: int = 12) -> dict:
+    # Noon by default - nowhere near a midnight boundary, so tests that
+    # aren't specifically about timezone conversion don't accidentally
+    # depend on it. `date_utc` is what `filter_messages_by_date` actually
+    # reads now; `"date"` stays too since citations still display it.
+    when = (datetime(day.year, day.month, day.day, hour, tzinfo=timezone.utc)
+           if day else None)
+    return {"sender": "a@x.com", "recipients": "b@x.com", "subject": subject,
+           "date": day.isoformat() if day else "", "date_utc": when}
+
+
+def test_filter_messages_by_date_matches_received_date_not_a_due_date():
+    # The point of this arm: a message with no extracted commitment at all -
+    # filter_commitments could never find this, because there is no
+    # Commitment row to filter in the first place.
+    w = parse_window("what did I get this week", TUE)
+    messages = {
+        "in-window": _msg(date(2001, 10, 30), "in window"),
+        "before": _msg(date(2001, 10, 1), "too early"),
+        "after": _msg(date(2001, 12, 1), "too late"),
+        "no-date": _msg(None, "never dated"),
+    }
+
+    out = filter_messages_by_date(messages, w)
+
+    assert [r["subject"] for r in out] == ["in window"]
+    assert out[0]["dedup_key"] == "in-window"
+
+
+def test_filter_messages_by_date_is_newest_first():
+    w = parse_window("what did I get this month", TUE)
+    messages = {
+        "early": _msg(date(2001, 10, 5), "early"),
+        "late": _msg(date(2001, 10, 25), "late"),
+    }
+
+    out = filter_messages_by_date(messages, w)
+
+    assert [r["subject"] for r in out] == ["late", "early"]
+
+
+def test_filter_messages_by_date_is_inclusive_at_both_ends():
+    w = parse_window("what did I get next week", TUE)
+    messages = {"start": _msg(w.start, "start"), "end": _msg(w.end, "end")}
+
+    out = filter_messages_by_date(messages, w)
+
+    assert {r["subject"] for r in out} == {"start", "end"}
+
+
+def test_filter_messages_by_date_uses_utc_when_no_tz_is_given():
+    # A message at 23:00 UTC on the 29th is still the 29th in UTC - the
+    # default, with no `tz` passed, before this ever mattered to a caller
+    # outside the web app.
+    w = parse_window("what did I get today", date(2001, 10, 29))
+    messages = {"m1": _msg(date(2001, 10, 29), "late utc", hour=23)}
+
+    out = filter_messages_by_date(messages, w)
+
+    assert [r["subject"] for r in out] == ["late utc"]
+
+
+def test_filter_messages_by_date_buckets_by_the_given_timezone_not_utc():
+    # The bug this guards against: a message sent at 23:00 UTC on the 29th
+    # is already the 30th in a UTC+5 zone. A caller anchored "today" on the
+    # 30th in that same zone (see chat/routes.py's `tz`) and a comparison
+    # done in raw UTC would disagree about which day this message landed on
+    # - exactly the gap between UTC midnight and the user's own midnight.
+    from datetime import timedelta
+
+    utc_plus_5 = timezone(timedelta(hours=5))
+    w = parse_window("what did I get today", date(2001, 10, 30))
+    messages = {"m1": _msg(date(2001, 10, 29), "late utc, next day at +5", hour=23)}
+
+    without_tz = filter_messages_by_date(messages, w)
+    with_tz = filter_messages_by_date(messages, w, tz=utc_plus_5)
+
+    assert without_tz == []                  # still the 29th in UTC - outside the window
+    assert [r["subject"] for r in with_tz] == ["late utc, next day at +5"]
 
 
 def test_commitments_with_no_due_date_never_appear_in_a_window():

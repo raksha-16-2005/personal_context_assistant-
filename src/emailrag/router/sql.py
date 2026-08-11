@@ -58,6 +58,7 @@ _WINDOWS: list[tuple[str, re.Pattern]] = [
     ("last_month", re.compile(r"\blast month\b", re.I)),
     ("this_quarter", re.compile(r"\bthis quarter\b", re.I)),
     ("today", re.compile(r"\b(?:today|by end of (?:the )?day|eod)\b", re.I)),
+    ("yesterday", re.compile(r"\byesterday\b", re.I)),
     ("tomorrow", re.compile(r"\btomorrow\b", re.I)),
     ("next_n_days", re.compile(r"\b(?:next|coming|in the next)\s+(\d+)\s+days?\b", re.I)),
     ("last_n_days", re.compile(r"\b(?:last|past|previous)\s+(\d+)\s+days?\b", re.I)),
@@ -135,6 +136,9 @@ def _bounds(name: str, match: re.Match, anchor: date) -> tuple[date, date]:
         return start, end
     if name == "today":
         return anchor, anchor
+    if name == "yesterday":
+        d = anchor - timedelta(days=1)
+        return d, d
     if name == "tomorrow":
         d = anchor + timedelta(days=1)
         return d, d
@@ -205,3 +209,41 @@ def filter_commitments(commitments: list, window: TemporalQuery) -> list:
         if window.start <= due <= window.end:
             out.append(c)
     return sorted(out, key=lambda c: (c.due_at, -getattr(c, "confidence", 0.0)))
+
+
+def filter_messages_by_date(messages: dict, window: TemporalQuery, tz=None) -> list[dict]:
+    """Messages actually *received* inside `window` - not a commitment's due
+    date, the message's own `date_utc`.
+
+    A commitment is a fact extracted from one message; "what arrived today"
+    is a question about messages that may never have had anything extracted
+    from them at all. `filter_commitments` cannot answer it regardless of
+    how it's tuned, because it only ever sees the messages extraction found
+    an obligation in. `messages` here is `Pipeline._messages` - already
+    loaded for every message this index has (see that method's own
+    docstring) - so this needs no new index, no new load, and no database.
+
+    `tz` has to be the same zone `window` was resolved in (a user's local
+    day in the multi-tenant web app, not necessarily UTC - see
+    chat/routes.py). Comparing a UTC calendar date against a window anchored
+    on the user's local "today" is wrong for roughly a third of every day -
+    whenever the two dates disagree, which is exactly the gap between UTC
+    midnight and the user's own midnight. `date_utc` is the full timestamp
+    for exactly this reason; converting it into `tz` before taking `.date()`
+    is what makes "today" mean the same day on both sides of the comparison.
+
+    Returned newest-first: "what did I get today" reads as a list, not a
+    ranking, and the newest arrival is the one most worth seeing first.
+    """
+    from datetime import timezone as _timezone
+
+    zone = tz or _timezone.utc
+    out = []
+    for dedup_key, row in messages.items():
+        raw = row.get("date_utc")
+        if raw is None:
+            continue
+        received = raw.astimezone(zone).date()
+        if window.start <= received <= window.end:
+            out.append({**row, "dedup_key": dedup_key})
+    return sorted(out, key=lambda r: r["date"], reverse=True)

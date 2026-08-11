@@ -73,7 +73,7 @@ excerpts disagree with each other, say so and cite both.
 
 PROMPT = """\
 Question: {question}
-{as_of_line}
+{owner_line}{as_of_line}{route_note_line}
 Numbered email excerpts:
 
 {sources}
@@ -236,9 +236,24 @@ class Synthesizer:
             self._llm = LLM()
         return self._llm
 
-    def answer(self, question: str, citations: list[Citation],
-               as_of: str = "") -> Answer:
-        """Synthesize an answer over `citations` (already numbered and ranked)."""
+    def answer(self, question: str, citations: list[Citation], as_of: str = "",
+               mailbox_owner: str = "", route_note: str = "") -> Answer:
+        """Synthesize an answer over `citations` (already numbered and ranked).
+
+        `mailbox_owner`, when given, is the email address whose mail this is -
+        the CLI/eval harness never passes it (the Enron corpus has no single
+        "the user" to be), so it defaults to empty and leaves their prompt
+        byte-identical. The web app does pass it: without it, nothing in the
+        prompt ever says whose mailbox is being searched, and a question like
+        "how many emails did I get today" is unanswerable in principle - not a
+        retrieval miss, but the model correctly refusing to guess which
+        excerpt's "To:" address "I" refers to. See webapp/app/chat/routes.py.
+
+        `route_note`, same opt-in reasoning: the true count behind a "how
+        many" question, computed by the date/SQL arm before `citations` was
+        truncated to a handful of examples - see `Pipeline.ask`'s own
+        docstring for why counting the truncated sample instead undercounts.
+        """
         import time
 
         sources = citations[:self.n_sources]
@@ -249,11 +264,21 @@ class Synthesizer:
             return Answer(question=question, text=INSUFFICIENT, citations=[],
                           refused=True)
 
+        owner_line = (f"\nYou are answering on behalf of the mailbox owner, "
+                     f"{mailbox_owner}. Resolve \"I\", \"me\", and \"my\" in the "
+                     f"question to refer to them.\n" if mailbox_owner else "")
         as_of_line = (f"\nThe question is being asked on {as_of}. Resolve relative "
                       f"dates in the excerpts against that.\n" if as_of else "")
-        prompt = PROMPT.format(question=question, as_of_line=as_of_line,
-                               sources=format_sources(sources),
-                               sentinel=INSUFFICIENT)
+        route_note_line = (
+            f"\nThe mailbox's date index reports: {route_note}. Use this exact "
+            f"figure when answering \"how many\" - do not count the numbered "
+            f"excerpts below instead, they may be a truncated sample of a larger "
+            f"total. State it as a plain fact with no bracketed citation, since "
+            f"it comes from the index rather than from any numbered excerpt.\n"
+            if route_note else "")
+        prompt = PROMPT.format(question=question, owner_line=owner_line,
+                               as_of_line=as_of_line, route_note_line=route_note_line,
+                               sources=format_sources(sources), sentinel=INSUFFICIENT)
 
         t0 = time.perf_counter()
         try:
@@ -263,6 +288,17 @@ class Synthesizer:
             return Answer(question=question, text="", citations=sources,
                           error=f"{type(exc).__name__}: {exc}")
         elapsed = (time.perf_counter() - t0) * 1000
+
+        # A model returning genuinely nothing is rare but real - observed from
+        # one Gemini quota-rotation fallback model (llm/client.py's
+        # GEMINI_FALLBACKS) on an ambiguous prompt, not every model. Without
+        # this, an empty completion sailed through as `refused=False` with
+        # blank `text` - a silent non-answer presented as if it had
+        # succeeded, rather than the same honest refusal a real
+        # `INSUFFICIENT_CONTEXT` would have been.
+        if not raw:
+            return Answer(question=question, text=INSUFFICIENT, citations=[],
+                          refused=True, model=getattr(self.llm, "last_model", ""))
 
         refused = raw.replace("*", "").strip().upper().startswith(INSUFFICIENT)
         cited, invalid = parse_citations(raw, len(sources))

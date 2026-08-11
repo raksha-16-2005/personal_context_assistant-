@@ -84,15 +84,31 @@ _TEMPORAL = re.compile(
     r"|in the (?:next|last|past) \d+ (?:days?|weeks?|months?)"
     r"|between .{0,20}and .{0,20}\b(?:19|20)\d{2}"
     r"|\bon \d{4}-\d{2}-\d{2}\b"
+    # "today"/"tomorrow" alone, not just paired with "due" - `router/sql.py`'s
+    # own `parse_window` already resolves both into a real window (`_WINDOWS`);
+    # the router just never told the rules to recognise them, so "what came in
+    # today" fell through to a similarity search that has no notion of "today"
+    # at all rather than to the date filter that already existed.
+    r"|\btoday\b|\byesterday\b|\btomorrow\b"
     r")",
     re.IGNORECASE)
 
-# Counting and ranking. "How many" is not a retrieval question at all: retrieval
-# returns a ranked list, and the top of a ranked list is not a count.
+# Counting. "How many" is not a retrieval question at all: retrieval returns a
+# ranked list, and the top of a ranked list is not a count.
+#
+# Deliberately *not* a bare "most"/"fewest"/"busiest"/"average" anymore - this
+# rule always wins over every other signal ("aggregate is never retrieval,
+# whatever else it contains"), and none of them are used by anything a
+# question could actually be routed *to*: there is no wired-in "count/rank
+# by X" SQL path (`router/sql.py`'s own `COUNT_SQL` is defined but never
+# called from the live query path). All a bare "most" ever did in practice
+# was force "what's most urgent/important/recent" - a superlative retrieval
+# genuinely answers by ranking - into a route that guarantees an empty
+# result, since nothing downstream implements that logic either way.
 _AGGREGATE = re.compile(
     r"\b(?:how many|how much|count of|number of|total (?:number|count|amount)"
     r"|list all|show all|every (?:commitment|deadline|message|email)"
-    r"|most|fewest|busiest|average|per (?:week|month|person|sender))\b",
+    r"|per (?:week|month|person|sender))\b",
     re.IGNORECASE)
 
 # Signals that the question wants content, not a date filter. Present alongside a
@@ -100,7 +116,17 @@ _AGGREGATE = re.compile(
 _SEMANTIC = re.compile(
     r"\b(?:what did|what was (?:decided|agreed|said)|why|how come|explain"
     r"|about|regarding|discussion|context|reason|terms|details"
-    r"|who (?:said|wrote|asked|decided|thinks?))\b",
+    r"|who (?:said|wrote|asked|decided|thinks?)"
+    # "what mail/emails did I get [today]" is a request for actual mail
+    # content, not a date comparison - without this, it fell through to
+    # pure "sql" alongside a temporal phrase, which only ever runs the date
+    # arms (due commitments, messages filtered by arrival date) and never
+    # attempts real retrieval. A user asking this got back an unrelated
+    # deadline with no real mail content at all, or an honest refusal, when
+    # what they wanted was a summary of what actually arrived.
+    r"|\b(?:mail|emails?|messages?)\b.{0,20}\b(?:get|got|receive|received|arrived)\b"
+    r"|\b(?:get|got|receive|received|arrived)\b.{0,20}\b(?:mail|emails?|messages?)\b"
+    r"|\bsummar(?:y|ize|ise)\b|\babstract\b)\b",
     re.IGNORECASE)
 
 _ENTITY = re.compile(

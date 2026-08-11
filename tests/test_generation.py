@@ -133,6 +133,41 @@ def test_the_as_of_anchor_reaches_the_prompt():
     assert "2001-10-30" in llm.prompts[0]
 
 
+def test_mailbox_owner_reaches_the_prompt_only_when_given():
+    llm = FakeLLM("Answer [1].")
+    Synthesizer(llm).answer("how many did I get", _sources(),
+                            mailbox_owner="alice@example.com")
+
+    assert "alice@example.com" in llm.prompts[0]
+    assert '"I", "me", and "my"' in llm.prompts[0]
+
+    llm2 = FakeLLM("Answer [1].")
+    Synthesizer(llm2).answer("how many did I get", _sources())
+    assert "alice@example.com" not in llm2.prompts[0]
+
+
+def test_route_note_reaches_the_prompt_and_forbids_citing_it():
+    llm = FakeLLM("Answer [1].")
+    Synthesizer(llm).answer(
+        "how many did I get today", _sources(),
+        route_note="3 non-bulk message(s) received today; 17 promotional message(s) filtered")
+
+    prompt = llm.prompts[0]
+    assert "17 promotional message(s) filtered" in prompt
+    # The model latched onto "authoritative" phrasing once and echoed it back
+    # as a fake "[Authoritative]" citation - see synthesize.py's own comment
+    # on `route_note_line`. Asserting the instruction not to cite this line
+    # is what would catch a regression back to that wording.
+    assert "no bracketed citation" in prompt
+
+
+def test_no_route_note_line_when_route_note_is_empty():
+    llm = FakeLLM("Answer [1].")
+    Synthesizer(llm).answer("q", _sources())
+
+    assert "mailbox's date index" not in llm.prompts[0]
+
+
 def test_the_system_prompt_demands_the_refusal_sentinel():
     llm = FakeLLM("Answer [1].")
     Synthesizer(llm).answer("q", _sources())
