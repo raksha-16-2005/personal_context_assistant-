@@ -89,6 +89,26 @@ def test_eight_bit_header_bytes_do_not_crash_the_parse(tmp_path):
     assert "meeting notes" in msg.subject
 
 
+def test_rfc2047_encoded_subject_is_decoded_not_stringified(tmp_path):
+    # A real Gmail message hit this: compat32 hands back an
+    # `email.header.Header` for an encoded-word subject, and `str()` on that
+    # object returns the encoded form verbatim (`=?Windows-1252?Q?...?=`)
+    # rather than decoding it - the subject that reached citations was
+    # literally that gibberish until _hdr called decode_header.
+    raw = (b"Message-ID: <encoded@thyme>\n"
+          b"From: alerts@example.com\n"
+          b"To: mark.taylor@enron.com\n"
+          b"Subject: =?Windows-1252?Q?Don=92t_Miss_Out!_Deadline_March_23!?=\n"
+          b"Date: Tue, 5 Dec 2000 09:14:00 -0800 (PST)\n\n"
+          b"Body text long enough to survive the bulk filter threshold.\n")
+    msg = parse_file(_write(tmp_path, "encoded.", raw), tmp_path / "maildir")
+
+    assert msg is not None
+    assert "=?" not in msg.subject
+    assert "Don" in msg.subject and "Miss Out" in msg.subject
+    assert "Deadline March 23" in msg.subject
+
+
 def test_dedup_is_content_based_not_message_id(tmp_path):
     # The Enron export stamped a distinct Message-ID on every copy of a
     # message, so ID-based dedup removes nothing. Identical content under
@@ -145,6 +165,40 @@ def test_bulk_filter_catches_machine_mail_and_keeps_real_mail():
     assert not filters.is_bulk(_msg())
     # 'notification' must match as a token, not inside an ordinary name.
     assert not filters.is_bulk(_msg(sender="john.reply@enron.com"))
+
+
+def test_dedup_and_filter_drops_repeats_and_bulk_in_one_pass():
+    messages = [
+        _msg(dedup_key="k1"),
+        _msg(dedup_key="k1"),                          # exact repeat
+        _msg(dedup_key="k2", has_list_unsubscribe=True),  # bulk
+        _msg(dedup_key="k3"),
+    ]
+    kept, stats = filters.dedup_and_filter(messages)
+
+    assert [m["dedup_key"] for m in kept] == ["k1", "k3"]
+    assert stats == {"n_parsed": 4, "n_dupe": 1, "n_bulk": 1, "n_kept": 2}
+
+
+def test_dedup_and_filter_keep_bulk_disables_the_rules_filter():
+    messages = [_msg(dedup_key="k1", has_list_unsubscribe=True)]
+    kept, stats = filters.dedup_and_filter(messages, keep_bulk=True)
+
+    assert [m["dedup_key"] for m in kept] == ["k1"]
+    assert stats["n_bulk"] == 0
+
+
+def test_dedup_and_filter_seen_set_persists_across_calls():
+    # This is what lets the per-user Gmail ingestion worker dedup across
+    # incremental sync batches without holding every previously-fetched
+    # message - only its dedup keys, in `seen`.
+    seen: set[str] = set()
+    first, _ = filters.dedup_and_filter([_msg(dedup_key="k1")], seen=seen)
+    second, stats = filters.dedup_and_filter([_msg(dedup_key="k1")], seen=seen)
+
+    assert len(first) == 1
+    assert len(second) == 0
+    assert stats["n_dupe"] == 1
 
 
 # --- threading -------------------------------------------------------------

@@ -25,25 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from emailrag.corpus import filters  # noqa: E402
 from emailrag.corpus.enron import iter_user_dirs, parse_user_dir  # noqa: E402
-
-SCHEMA = pa.schema([
-    ("message_id", pa.string()),
-    ("dedup_key", pa.string()),
-    ("date_utc", pa.timestamp("us", tz="UTC")),
-    ("sender", pa.string()),
-    ("recipients", pa.string()),
-    ("cc", pa.string()),
-    ("subject", pa.string()),
-    ("subject_norm", pa.string()),
-    ("body", pa.string()),
-    ("body_new", pa.string()),
-    ("in_reply_to", pa.string()),
-    ("references", pa.string()),
-    ("has_list_unsubscribe", pa.bool_()),
-    ("source_path", pa.string()),
-    ("owner", pa.string()),
-    ("folder", pa.string()),
-])
+from emailrag.corpus.schema import MESSAGE_SCHEMA as SCHEMA  # noqa: E402
 
 FLUSH_EVERY = 25_000
 
@@ -84,17 +66,16 @@ def main() -> int:
         with mp.Pool(args.workers) as pool:
             tasks = [(d, args.maildir) for d in user_dirs]
             for messages in tqdm(pool.imap(parse_user_dir, tasks), total=len(tasks), unit="user"):
-                for msg in messages:
-                    n_parsed += 1
-                    if msg["dedup_key"] in seen:
-                        n_dupe += 1
-                        continue
-                    seen.add(msg["dedup_key"])
-                    if not args.keep_bulk and filters.is_bulk(msg):
-                        n_bulk += 1
-                        continue
-                    buffer.append(msg)
-                    n_kept += 1
+                # Same dedup+bulk-filter decision the per-user Gmail ingestion
+                # worker makes (webapp/app/ingestion) - factored into one place
+                # (filters.dedup_and_filter) so the two corpora cannot drift.
+                kept, batch_stats = filters.dedup_and_filter(
+                    messages, seen=seen, keep_bulk=args.keep_bulk)
+                n_parsed += batch_stats["n_parsed"]
+                n_dupe += batch_stats["n_dupe"]
+                n_bulk += batch_stats["n_bulk"]
+                n_kept += batch_stats["n_kept"]
+                buffer.extend(kept)
                 if len(buffer) >= FLUSH_EVERY:
                     flush()
         flush()

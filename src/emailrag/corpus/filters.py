@@ -57,6 +57,37 @@ def report(total: int, dropped: int) -> str:
     return f"rules filter: dropped {dropped:,} / {total:,} ({pct:.1f}%)"
 
 
+def dedup_and_filter(messages, seen: set[str] | None = None,
+                     keep_bulk: bool = False) -> tuple[list[dict], dict]:
+    """Dedup by `dedup_key` and drop bulk mail, in one pass over `messages`.
+
+    The exact per-message decision `scripts/build_corpus.py` makes for the
+    Enron maildir, factored out so `corpus/gmail.py`'s per-user ingestion
+    worker (webapp/app/ingestion) gets byte-identical behaviour instead of a
+    second copy of this logic that can silently drift from the first.
+
+    `seen` is mutated in place and may be passed back in on the next call -
+    that's what lets a caller dedup across incremental sync batches without
+    holding every previously-seen message, only its dedup keys.
+    """
+    if seen is None:
+        seen = set()
+    kept: list[dict] = []
+    stats = {"n_parsed": 0, "n_dupe": 0, "n_bulk": 0, "n_kept": 0}
+    for msg in messages:
+        stats["n_parsed"] += 1
+        if msg["dedup_key"] in seen:
+            stats["n_dupe"] += 1
+            continue
+        seen.add(msg["dedup_key"])
+        if not keep_bulk and is_bulk(msg):
+            stats["n_bulk"] += 1
+            continue
+        kept.append(msg)
+        stats["n_kept"] += 1
+    return kept, stats
+
+
 # --- corpus-level filter ---------------------------------------------------
 #
 # `is_bulk` looks at one message and cannot see that the same sender emitted
