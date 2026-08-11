@@ -1,0 +1,45 @@
+# Fly.io app config. `app` must be globally unique across all of Fly - pick
+# your own name during setup (fly.io will reject one someone else has) and
+# update it here AND in OAUTH_REDIRECT_BASE_URL below - Google's OAuth
+# redirect URI has to match this exactly too (see DEPLOY.md step 5).
+app = "REPLACE-ME-emailrag"
+primary_region = "iad"
+
+[build]
+
+[env]
+  OAUTH_REDIRECT_BASE_URL = "https://REPLACE-ME-emailrag.fly.dev"
+  USER_INDEX_ROOT = "/data/users"
+  SHIPPED_CHUNKING = "thread_aware"
+  SHIPPED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+  SHIPPED_RERANK = "L2@20/t192"
+
+# DATABASE_URL, MASTER_KEY, SESSION_SECRET, GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET
+# are secrets, not [env] - see DEPLOY.md, set via `fly secrets set`.
+
+[processes]
+  app = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
+  worker = "python -m app.jobs.runner"
+
+# Runs once before each deploy's new machines start serving traffic; a
+# non-zero exit blocks the rollout - see webapp/app/security.py's own
+# docstring on why this checks against the one real MASTER_KEY from a
+# standalone run, not from the app's own request-serving startup.
+release_command = "python -m app.security"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+[[mounts]]
+  source = "emailrag_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "2gb"
+  processes = ["app", "worker"]

@@ -1,0 +1,18 @@
+# Kept minimal and explicit rather than a blanket "ignore everything except
+# code" pattern - the Dockerfile only COPYs specific paths anyway, so this
+# mainly saves build-context upload time on the heavy/irrelevant ones.
+.git
+.venv
+venv
+__pycache__
+*.pyc
+data/
+runs/
+docs/
+webapp/frontend/node_modules
+webapp/frontend/dist
+webapp/.pytest_cache
+webapp/.env
+.env
+*.env
+!webapp/.env.example
