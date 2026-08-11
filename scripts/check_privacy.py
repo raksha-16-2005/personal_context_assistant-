@@ -52,6 +52,12 @@ GMAIL_ARTIFACTS = [
     "data/interim/gmail.parquet",
     "data/index/gmail",
     "data/commitments/gmail",
+    # The multi-tenant web app's default USER_INDEX_ROOT (webapp/app/config.py)
+    # when no override is set - one directory per real user, each holding a
+    # real mailbox's messages.parquet and index. Production points
+    # USER_INDEX_ROOT outside the repo entirely; this only catches a local dev
+    # run that forgot to.
+    "data/index/users",
 ]
 
 # Secrets in tracked content. Narrow on purpose: a broad "looks like a token" regex
