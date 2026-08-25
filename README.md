@@ -6,11 +6,11 @@ A hybrid RAG pipeline over email, with a SQL/semantic query router.
 — public Enron corpus only, ZeroGPU. Latency there is not the latency reported
 below; see the demo's own README for why.
 
-**Live webapp:** [personal-context-assistant.vercel.app](https://personal-context-assistant.vercel.app)
+**Live webapp:** [personal-context-assistant.onrender.com](https://personal-context-assistant.onrender.com)
 — the multi-tenant Gmail RAG app (see [webapp/](webapp/)), sign in with your
-own Google account. Frontend on Vercel, backend on
-[Render](https://personal-context-assistant.onrender.com); see
-[DEPLOY.md](DEPLOY.md) for how it's deployed.
+own Google account. Free-tier Render + Neon; see [DEPLOY.md](DEPLOY.md) for
+how it's deployed (and why the frontend isn't split onto its own domain -
+a real Safari login bug, not a preference).
 
 Every number below is measured on one machine and reproducible with
 `make bench`. The eval set is published in [`data/eval/`](data/eval/) so the

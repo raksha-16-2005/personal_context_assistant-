@@ -65,10 +65,24 @@ CREATE TABLE IF NOT EXISTS sync_state (
     -- fetching everything before the fast first sync's recent-only window -
     -- what stops that one-time catch-up from re-running on every later
     -- incremental sync.
-    full_history_synced boolean NOT NULL DEFAULT false
+    full_history_synced boolean NOT NULL DEFAULT false,
+    -- Live progress within the *current* fetch, distinct from messages_seen
+    -- (a lifetime cumulative count, only updated once a sync finishes) -
+    -- see ingestion/worker.py's on_progress callback. progress_total comes
+    -- from Gmail's own exact message count for this sync's query
+    -- (len(list_message_ids(...))), not an estimate - what turns
+    -- /sync-status's eta_seconds from a flat guess into an actual
+    -- (elapsed / progress_current) * (progress_total - progress_current)
+    -- projection once enough of the fetch has landed to extrapolate from.
+    sync_started_at      timestamptz,
+    progress_current     integer NOT NULL DEFAULT 0,
+    progress_total       integer NOT NULL DEFAULT 0
 );
 
 ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS full_history_synced boolean NOT NULL DEFAULT false;
+ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS sync_started_at timestamptz;
+ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS progress_current integer NOT NULL DEFAULT 0;
+ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS progress_total integer NOT NULL DEFAULT 0;
 
 -- The durable copy of USER_INDEX_ROOT/<user_id>/ for a deployment with no
 -- persistent disk - see app/ingestion/blob_store.py. One tar+gzipped row per

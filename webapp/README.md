@@ -1,9 +1,11 @@
 # Multi-tenant Gmail RAG backend
 
-**Live:** [personal-context-assistant.vercel.app](https://personal-context-assistant.vercel.app)
-(frontend, Vercel) talking to
-[personal-context-assistant.onrender.com](https://personal-context-assistant.onrender.com)
-(this backend, Render) - see [../DEPLOY.md](../DEPLOY.md) for how it's deployed.
+**Live:** [personal-context-assistant.onrender.com](https://personal-context-assistant.onrender.com)
+- single origin (this backend serves its own built frontend), free-tier
+Render + Neon. See [../DEPLOY.md](../DEPLOY.md) for how it's deployed, and
+that file's "Splitting the frontend onto Vercel" section for why this
+isn't split onto its own domain (a real Safari login bug, not a
+preference).
 
 Turns the single-user, local-only pipeline in `../src/emailrag` into a
 multi-tenant web backend: Google login, per-user Gmail ingestion, a shared

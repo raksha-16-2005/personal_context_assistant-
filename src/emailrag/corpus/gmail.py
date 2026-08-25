@@ -481,6 +481,13 @@ def fetch_messages(client: GmailClient, query: str = "", max_messages: int = 0,
     Fetched concurrently (see `FETCH_WORKERS`) - order is not preserved, which
     is fine: nothing downstream (dedup, threading, chunking) depends on the
     order messages arrive in.
+
+    `on_progress(completed, total)`, if given, is called once immediately
+    with `completed=0` (as soon as the exact total is known - this fully
+    materializes `list_message_ids` before fetching anything, specifically
+    so a caller has a real denominator to show progress against from the
+    very start, not just once the first batch lands) and again every 50
+    completions after that.
     """
     from dataclasses import asdict
 
@@ -492,8 +499,11 @@ def fetch_messages(client: GmailClient, query: str = "", max_messages: int = 0,
 
     # Materialized rather than left as a generator: a thread pool needs every
     # id up front to submit work, and even a 100k-message mailbox is a
-    # trivial amount of memory as bare id strings.
+    # trivial amount of memory as bare id strings. This also happens to be
+    # the exact count `on_progress` reports as `total` - not an estimate.
     message_ids = list(client.list_message_ids(query, max_messages))
+    if on_progress:
+        on_progress(0, len(message_ids))
 
     # Dicts, not `Message` objects: `parse_user_dir` returns dicts and the whole
     # downstream pipeline (dedup, filters, threading, Parquet) consumes dicts. A
@@ -515,7 +525,12 @@ def fetch_messages(client: GmailClient, query: str = "", max_messages: int = 0,
                 # One unreadable message must not end a 35k-message sync.
                 failures.append(f"{message_id}: {exc}")
             if on_progress and completed % 50 == 0:
-                on_progress(completed, len(out), len(failures))
+                on_progress(completed, len(message_ids))
+    # One last call so a `total` not divisible by 50 still ends on its real
+    # final count rather than leaving a caller's tracked progress stuck a
+    # few messages short of "done".
+    if on_progress and message_ids:
+        on_progress(completed, len(message_ids))
     if failures:
         print(f"  {len(failures)} message(s) could not be fetched; first: "
               f"{failures[0][:120]}")
@@ -523,13 +538,18 @@ def fetch_messages(client: GmailClient, query: str = "", max_messages: int = 0,
 
 
 def sync(client: GmailClient, state_path: Path, query: str = "",
-         max_messages: int = 0, force_full: bool = False
+         max_messages: int = 0, force_full: bool = False, on_progress=None
          ) -> tuple[list[dict], SyncState]:
     """Incremental where possible, full where not.
 
     Returns the new messages and the updated cursor. The cursor is read *before*
     fetching, so messages arriving during the sync are picked up next time rather
     than being skipped.
+
+    `on_progress`, if given, is forwarded to `fetch_messages` (see its own
+    docstring) for the full-sync path; the incremental (`history_since`)
+    path calls it directly since it fetches serially rather than through
+    `fetch_messages` - same `(completed, total)` shape either way.
     """
     state = SyncState.load(state_path)
     next_cursor = client.current_history_id()
@@ -542,8 +562,11 @@ def sync(client: GmailClient, state_path: Path, query: str = "",
             from dataclasses import asdict
 
             from .enron import parse_message
+            ids = ids[:max_messages or None]
+            if on_progress:
+                on_progress(0, len(ids))
             messages = []
-            for message_id in ids[:max_messages or None]:
+            for i, message_id in enumerate(ids, start=1):
                 try:
                     parsed = parse_message(client.raw_message(message_id),
                                            source_path=f"gmail:{message_id}")
@@ -551,12 +574,14 @@ def sync(client: GmailClient, state_path: Path, query: str = "",
                         messages.append(asdict(parsed))
                 except GmailError:
                     continue
+                if on_progress and (i % 50 == 0 or i == len(ids)):
+                    on_progress(i, len(ids))
         except HistoryTooOld:
             print("  stored historyId has expired (Google keeps roughly a week) - "
                   "falling back to a full sync")
-            messages = fetch_messages(client, query, max_messages)
+            messages = fetch_messages(client, query, max_messages, on_progress=on_progress)
     else:
-        messages = fetch_messages(client, query, max_messages)
+        messages = fetch_messages(client, query, max_messages, on_progress=on_progress)
 
     state.history_id = next_cursor
     state.last_sync_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

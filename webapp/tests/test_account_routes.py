@@ -75,7 +75,8 @@ def test_sync_status_with_no_row_yet_reads_as_pending(client):
     assert resp.status_code == 200
     assert resp.json() == {
         "status": "pending", "messages_seen": 0, "full_history_synced": False,
-        "error_detail": "", "eta_seconds": 60,
+        "error_detail": "", "progress_current": 0, "progress_total": 0,
+        "eta_seconds": 60, "eta_is_estimate": True,
     }
 
 
@@ -84,7 +85,9 @@ def test_sync_status_reflects_sync_state_and_zeroes_eta_once_ready(client, db_co
     db_conn.execute(
         "INSERT INTO sync_state (user_id, status, messages_seen) VALUES (%s, 'syncing', 3)",
         (user_id,))
-    assert c.get("/sync-status").json()["eta_seconds"] == 60
+    status = c.get("/sync-status").json()
+    assert status["eta_seconds"] == 60          # no progress yet - the flat fallback
+    assert status["eta_is_estimate"] is True
 
     db_conn.execute(
         "UPDATE sync_state SET status = 'ready', messages_seen = 9 WHERE user_id = %s",
@@ -93,6 +96,24 @@ def test_sync_status_reflects_sync_state_and_zeroes_eta_once_ready(client, db_co
     assert resp["status"] == "ready"
     assert resp["messages_seen"] == 9
     assert resp["eta_seconds"] == 0
+    assert resp["eta_is_estimate"] is False
+
+
+def test_sync_status_projects_a_real_eta_from_live_progress(client, db_conn):
+    c, user_id, _, _ = client
+    db_conn.execute(
+        "INSERT INTO sync_state (user_id, status, sync_started_at, "
+        "progress_current, progress_total) "
+        "VALUES (%s, 'syncing', now() - interval '10 seconds', 5, 20)",
+        (user_id,))
+
+    resp = c.get("/sync-status").json()
+    assert resp["progress_current"] == 5
+    assert resp["progress_total"] == 20
+    assert resp["eta_is_estimate"] is False
+    # ~10s for 5 messages -> ~2s/message -> ~30s for the remaining 15,
+    # generous bounds for test timing jitter.
+    assert 20 <= resp["eta_seconds"] <= 45
 
 
 def test_sync_status_surfaces_error_detail(client, db_conn):

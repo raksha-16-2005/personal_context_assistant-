@@ -167,6 +167,20 @@ def _write_bulk_messages(path: Path, rows: list[dict]) -> None:
     pq.write_table(pa.table(cols, schema=BULK_SCHEMA), path, compression="zstd")
 
 
+def _progress_reporter(conn, user_id: str):
+    """An `on_progress(completed, total)` callback (see corpus.gmail.sync's
+    own docstring) that writes straight into sync_state, so /sync-status can
+    compute a real ETA from real, in-flight numbers instead of a flat guess -
+    `total` here is Gmail's own exact message count for this sync's query,
+    not an estimate.
+    """
+    def report(completed: int, total: int) -> None:
+        conn.execute(
+            "UPDATE sync_state SET progress_current = %s, progress_total = %s "
+            "WHERE user_id = %s", (completed, total, user_id))
+    return report
+
+
 def _rebuild_index(rows: list[dict], out_dir: Path, chunking: str, model_id: str,
                    shared_model=None) -> dict:
     from transformers import AutoTokenizer
@@ -261,7 +275,9 @@ def sync_user(conn, settings, user_id: str, shared_model=None, query: str = "") 
     msg_path = messages_path(settings.user_index_root, user_id)
     bulk_path = bulk_messages_path(settings.user_index_root, user_id)
 
-    conn.execute("UPDATE sync_state SET status = 'syncing' WHERE user_id = %s", (user_id,))
+    conn.execute(
+        "UPDATE sync_state SET status = 'syncing', sync_started_at = now(), "
+        "progress_current = 0, progress_total = 0 WHERE user_id = %s", (user_id,))
 
     # Only actually reads from Postgres when local disk doesn't already have
     # this user (see blob_store's own docstring) - a deployment with a
@@ -272,7 +288,8 @@ def sync_user(conn, settings, user_id: str, shared_model=None, query: str = "") 
 
     existing_keys = _read_existing_dedup_keys(msg_path)
     existing_bulk_keys = _read_existing_dedup_keys(bulk_path)
-    raw_messages, gmail_state = G.sync(client, state_path, query=query)
+    raw_messages, gmail_state = G.sync(
+        client, state_path, query=query, on_progress=_progress_reporter(conn, user_id))
     # `G.sync` returns the updated cursor but never writes it - by design,
     # since it's meant to work for any caller regardless of when that caller
     # considers a sync "done" (see that function's own docstring: "the
@@ -336,7 +353,17 @@ def backfill_history(conn, settings, user_id: str, shared_model=None) -> dict:
     existing_keys = _read_existing_dedup_keys(msg_path)
     existing_bulk_keys = _read_existing_dedup_keys(bulk_path)
 
-    raw_messages = G.fetch_messages(client, query=before_query(RECENT_SYNC_DAYS))
+    # Reuses the same progress columns sync_user's blocking wait does, even
+    # though this runs after status is already 'ready' - /sync-status's
+    # "still importing older mail" note (full_history_synced=false) reads
+    # them too, just without an ETA calculation, since nothing is blocked on
+    # this finishing.
+    conn.execute(
+        "UPDATE sync_state SET progress_current = 0, progress_total = 0 "
+        "WHERE user_id = %s", (user_id,))
+    raw_messages = G.fetch_messages(
+        client, query=before_query(RECENT_SYNC_DAYS),
+        on_progress=_progress_reporter(conn, user_id))
     new_bulk = _new_bulk_rows(raw_messages, existing_keys | existing_bulk_keys)
 
     kept, filter_stats = filters.dedup_and_filter(raw_messages, seen=existing_keys)

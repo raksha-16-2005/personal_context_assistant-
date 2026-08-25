@@ -13,6 +13,7 @@ is not still "logged in" client-side.
 from __future__ import annotations
 
 import shutil
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
@@ -53,31 +54,68 @@ def me(user_id: str = Depends(get_current_user_id),
     return {"id": user_id, "email": row[0], "timezone": row[1]}
 
 
+FALLBACK_ETA_SECONDS = 60
+
+
+def _estimate_eta_seconds(status: str, sync_started_at, progress_current: int,
+                          progress_total: int) -> int | None:
+    """A real projection once there's something to project from - Gmail's
+    own exact count for this sync (progress_total, see
+    ingestion/worker.py's on_progress wiring) and how long `progress_current`
+    of it has actually taken so far (`sync_started_at`). None until then,
+    which the caller reports as the flat `FALLBACK_ETA_SECONDS` guess rather
+    than a fabricated number with no real signal behind it yet - the first
+    poll or two of a sync, before the first `on_progress` callback lands.
+    """
+    if status not in ("pending", "syncing"):
+        return 0
+    if not sync_started_at or progress_current <= 0 or progress_total <= 0:
+        return None
+    elapsed = (datetime.now(timezone.utc) - sync_started_at).total_seconds()
+    rate = elapsed / progress_current
+    return max(0, round(rate * (progress_total - progress_current)))
+
+
 @router.get("/sync-status")
 def sync_status(user_id: str = Depends(get_current_user_id),
                 settings: Settings = Depends(get_settings)):
     """Polled by the frontend while a mailbox is syncing, so a new login
-    shows "ready in about a minute" instead of only ever finding out via a
-    /chat request's 409. `eta_seconds` is a fixed estimate, not a live
-    countdown - see ingestion/worker.py's RECENT_SYNC_DAYS docstring, the
-    number the fast first pass is actually built around ("about a minute").
-    There's no real per-user total to count down against without a Gmail
-    call this endpoint would rather not make on every poll.
+    shows real progress ("41 of 120 messages, about 30s left") instead of
+    only ever finding out it's done via a /chat request's 409.
+
+    `eta_seconds` is a genuine projection - (elapsed / progress_current) *
+    (progress_total - progress_current), where progress_total is Gmail's own
+    exact message count for this sync's query (see ingestion/worker.py's
+    on_progress wiring), not an estimate - once there's enough progress to
+    project from. Before that (the first poll or two of a sync), it falls
+    back to FALLBACK_ETA_SECONDS rather than a number with no real signal
+    behind it.
     """
     with connect(settings.database_url) as conn:
         row = conn.execute(
-            "SELECT status, messages_seen, full_history_synced, error_detail "
+            "SELECT status, messages_seen, full_history_synced, error_detail, "
+            "sync_started_at, progress_current, progress_total "
             "FROM sync_state WHERE user_id = %s", (user_id,)).fetchone()
     # No row yet is effectively "pending" - auth/routes.py's callback
     # inserts one synchronously before the frontend ever loads, so this only
     # covers a request that somehow raced that insert.
-    status, messages_seen, full_history_synced, error_detail = row or ("pending", 0, False, "")
+    (status, messages_seen, full_history_synced, error_detail, sync_started_at,
+     progress_current, progress_total) = row or ("pending", 0, False, "", None, 0, 0)
+
+    eta_seconds = _estimate_eta_seconds(
+        status, sync_started_at, progress_current, progress_total)
     return {
         "status": status,
         "messages_seen": messages_seen,
         "full_history_synced": full_history_synced,
         "error_detail": error_detail,
-        "eta_seconds": 60 if status in ("pending", "syncing") else 0,
+        "progress_current": progress_current,
+        "progress_total": progress_total,
+        "eta_seconds": FALLBACK_ETA_SECONDS if eta_seconds is None else eta_seconds,
+        # True only once eta_seconds reflects this user's own real fetch,
+        # not the flat fallback - the frontend uses this to say "about" vs
+        # state a number with more confidence than it deserves.
+        "eta_is_estimate": eta_seconds is None and status in ("pending", "syncing"),
     }
 
 

@@ -247,6 +247,37 @@ def test_one_unreadable_message_does_not_end_the_sync(tmp_path, monkeypatch):
     assert len(rows) == 1        # the good one survived
 
 
+def test_on_progress_reports_the_exact_total_before_fetching_anything(tmp_path, monkeypatch):
+    client = _client(tmp_path)
+    monkeypatch.setattr(client, "list_message_ids",
+                        lambda *a, **k: iter(["id1", "id2", "id3"]))
+    monkeypatch.setattr(client, "raw_message", lambda message_id: RAW)
+
+    calls = []
+    G.fetch_messages(client, on_progress=lambda completed, total: calls.append((completed, total)))
+
+    # The very first call reports the real total (3), before any message has
+    # actually been fetched - a caller showing "X of Y" needs Y from the start.
+    assert calls[0] == (0, 3)
+    # And the last call reflects every message actually completed, even
+    # though 3 is not a multiple of the 50-per-update cadence.
+    assert calls[-1] == (3, 3)
+
+
+def test_on_progress_final_call_lands_even_under_the_batch_size(tmp_path, monkeypatch):
+    # Regression check for the "stuck a few messages short of done" gap: a
+    # fetch smaller than 50 messages only ever hits the unconditional final
+    # call, never the `completed % 50 == 0` one.
+    client = _client(tmp_path)
+    monkeypatch.setattr(client, "list_message_ids", lambda *a, **k: iter(["id1"]))
+    monkeypatch.setattr(client, "raw_message", lambda message_id: RAW)
+
+    calls = []
+    G.fetch_messages(client, on_progress=lambda completed, total: calls.append((completed, total)))
+
+    assert (1, 1) in calls
+
+
 # -- incremental sync -------------------------------------------------------
 
 def test_sync_state_roundtrips(tmp_path):
@@ -284,6 +315,24 @@ def test_a_second_sync_uses_history_instead_of_relisting(tmp_path, monkeypatch):
 
     assert len(messages) == 1
     assert state.history_id == "900"
+
+
+def test_sync_reports_progress_on_the_incremental_path_too(tmp_path, monkeypatch):
+    # The incremental path fetches serially, not through fetch_messages - it
+    # has to report on_progress itself rather than inheriting it for free.
+    state_path = tmp_path / "state.json"
+    G.SyncState(history_id="500").save(state_path)
+
+    client = _client(tmp_path)
+    monkeypatch.setattr(client, "current_history_id", lambda: "900")
+    monkeypatch.setattr(client, "history_since", lambda h: iter(["new1", "new2"]))
+    monkeypatch.setattr(client, "raw_message", lambda mid: RAW)
+
+    calls = []
+    G.sync(client, state_path, on_progress=lambda completed, total: calls.append((completed, total)))
+
+    assert calls[0] == (0, 2)     # total known before any fetch
+    assert calls[-1] == (2, 2)    # ends on the real final count
 
 
 def test_an_expired_cursor_falls_back_to_a_full_sync(tmp_path, monkeypatch):

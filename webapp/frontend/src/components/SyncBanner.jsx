@@ -3,11 +3,26 @@ import { api } from '../api'
 
 const POLL_MS = 4000
 
-function etaMessage(etaSeconds, messagesSeen) {
-  const minutes = Math.max(1, Math.ceil(etaSeconds / 60))
-  const unit = minutes === 1 ? 'minute' : 'minutes'
-  const progress = messagesSeen > 0 ? ` (${messagesSeen} messages synced so far)` : ''
-  return `Reading your mailbox - usually ready in about ${minutes} ${unit}${progress}.`
+function formatDuration(seconds) {
+  if (seconds <= 1) return 'a few seconds'
+  if (seconds < 60) return `${seconds} seconds`
+  const minutes = Math.round(seconds / 60)
+  return `${minutes} minute${minutes === 1 ? '' : 's'}`
+}
+
+// eta_is_estimate is true only while there's no real progress signal yet
+// (the first poll or two of a sync, before ingestion/worker.py's
+// on_progress callback has landed) - the backend falls back to a flat
+// guess rather than fabricate a number, and this mirrors that honestly
+// instead of stating a guess as if it were computed.
+function etaMessage(status) {
+  const { eta_seconds, eta_is_estimate, progress_current, progress_total } = status
+  const time = formatDuration(eta_seconds)
+  if (eta_is_estimate) {
+    return `Reading your mailbox - usually ready in about ${time}.`
+  }
+  const progress = progress_total > 0 ? ` (${progress_current} of ${progress_total} messages)` : ''
+  return `Reading your mailbox${progress} - about ${time} left.`
 }
 
 // Polled from the Shell (App.jsx) so it's visible no matter which page is
@@ -56,13 +71,16 @@ export default function SyncBanner() {
   }
 
   if (status.status !== 'ready') {
-    return <div className="sync-banner">{etaMessage(status.eta_seconds, status.messages_seen)}</div>
+    return <div className="sync-banner">{etaMessage(status)}</div>
   }
 
   if (!status.full_history_synced) {
+    const progress = status.progress_total > 0
+      ? ` (${status.progress_current} of ${status.progress_total} messages)` : ''
     return (
       <div className="sync-banner sync-banner-subtle">
-        Recent mail is ready to ask about - still importing older mail in the background.
+        Recent mail is ready to ask about - still importing older mail in the
+        background{progress}.
       </div>
     )
   }

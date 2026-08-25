@@ -2,19 +2,21 @@
 
 Two independent paths - pick one, they don't mix:
 
-- **Render + Vercel + Neon** (below): genuinely free, no credit card anywhere.
-  The backend has no persistent disk, which this app's code already
-  accounts for - see "How this works on a disk-less free tier" below for
-  what that means in practice.
+- **Render + Neon** (below): genuinely free, no credit card anywhere. The
+  backend has no persistent disk, which this app's code already accounts
+  for - see "How this works on a disk-less free tier" below for what that
+  means in practice.
 - **Fly.io** (further down): simpler - one platform, a real persistent
   volume, no rehydration-from-Postgres behavior to think about - but
   requires a card on file and runs roughly $5-10/mo for what this app
   actually uses.
 
-Both paths end with the frontend split onto Vercel (its own section below,
-shared by both).
+Both serve the frontend from the same origin as the backend by default -
+one URL, works everywhere, no further setup. Splitting the frontend onto
+Vercel is possible but **not recommended**; see its own section below for
+why (a real, hit-in-practice login bug in Safari).
 
-## Deploying to Render + Vercel + Neon (free tier)
+## Deploying to Render + Neon (free tier)
 
 ### 0. Neon: create the free Postgres database
 
@@ -62,24 +64,15 @@ Google Cloud Console -> APIs & Services -> Credentials -> your OAuth client
 https://<your-service>.onrender.com/auth/google/callback
 ```
 
-### 3. Vercel: deploy the frontend
+### 3. Check it
 
-Follow "Splitting the frontend onto Vercel" below, using
-`https://<your-service>.onrender.com` as `VITE_API_BASE_URL`. Once you have
-the Vercel URL, go back to Render's environment variables (Settings ->
-Environment) and add:
-
-```
-FRONTEND_BASE_URL=https://<project>.vercel.app
-SESSION_COOKIE_SAMESITE=none
-```
-
-Render redeploys automatically when you save env var changes.
-
-### 4. Check it
-
-Open the Vercel URL, sign in with Google, and confirm you land back on the
-Vercel app logged in (not on the Render URL).
+Nothing more to deploy - this backend serves its own built frontend at `/`
+(the Dockerfile builds it in). Open
+`https://<your-service>.onrender.com`, sign in with Google, and confirm you
+land back on it logged in. Leave `FRONTEND_BASE_URL` and
+`SESSION_COOKIE_SAMESITE` unset - their defaults are exactly right for this
+single-origin setup, and setting them (e.g. for the Vercel split below)
+would break login here instead.
 
 ### How this works on a disk-less free tier
 
@@ -199,11 +192,20 @@ and does a rolling replace of the running machines.
 
 ## Splitting the frontend onto Vercel
 
-Shared by both paths above. If you followed the Render path, the backend is
-already on a different origin from the frontend by construction - this
-section is not optional there. If you're on Fly, this backend already
-serves its own built frontend at `/`, so Vercel is only for those who
-specifically want the frontend on its own domain/CI.
+**Not recommended - read this first.** Splitting the frontend onto a
+different domain than the backend makes the session cookie a cross-site
+cookie, and Safari's "Prevent Cross-Site Tracking" (on by default) silently
+refuses to send it back to the backend: Google login appears to succeed,
+then bounces straight back to the login page, logged out, with no error
+shown anywhere - hit in practice deploying exactly this setup. Chrome
+currently tolerates it. There is no code-level fix for this short of
+putting the frontend and backend on subdomains of one domain you own (so
+they're same-site, not just both HTTPS) - if you don't have a domain for
+that, the single-origin setup above (no Vercel) is the one that actually
+works in every browser, not just some.
+
+If you still want this - a separate domain/CI for the frontend is worth
+more to you than Safari support, say - here's how:
 
 1. **Deploy the backend first** (Render or Fly, above) and note its public
    URL.
