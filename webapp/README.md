@@ -1,5 +1,10 @@
 # Multi-tenant Gmail RAG backend
 
+**Live:** [personal-context-assistant.vercel.app](https://personal-context-assistant.vercel.app)
+(frontend, Vercel) talking to
+[personal-context-assistant.onrender.com](https://personal-context-assistant.onrender.com)
+(this backend, Render) - see [../DEPLOY.md](../DEPLOY.md) for how it's deployed.
+
 Turns the single-user, local-only pipeline in `../src/emailrag` into a
 multi-tenant web backend: Google login, per-user Gmail ingestion, a shared
 retrieval/generation pipeline that answers each user's questions over their
