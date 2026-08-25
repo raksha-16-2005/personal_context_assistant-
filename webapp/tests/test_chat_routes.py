@@ -231,3 +231,40 @@ def test_a_conversation_id_from_another_user_is_rejected(client, db_conn):
         assert resp.status_code == 404
     finally:
         db_conn.execute("DELETE FROM users WHERE id = %s", (other,))
+
+
+def test_deleting_a_conversation_removes_it_and_its_messages(client, db_conn):
+    c, user_id, _ = client
+    conv_id = db_conn.execute(
+        "INSERT INTO conversations (user_id, title) VALUES (%s, 'x') RETURNING id",
+        (user_id,)).fetchone()[0]
+    db_conn.execute(
+        "INSERT INTO messages (conversation_id, role, content) VALUES (%s, 'user', 'hi')",
+        (conv_id,))
+
+    resp = c.delete(f"/conversations/{conv_id}")
+    assert resp.status_code == 204
+
+    assert db_conn.execute(
+        "SELECT 1 FROM conversations WHERE id = %s", (conv_id,)).fetchone() is None
+    assert db_conn.execute(
+        "SELECT 1 FROM messages WHERE conversation_id = %s", (conv_id,)).fetchone() is None
+    assert c.get("/conversations").json() == []
+
+
+def test_deleting_another_users_conversation_404s(client, db_conn):
+    c, _, _ = client
+    other = db_conn.execute(
+        "INSERT INTO users (google_sub, email) VALUES (%s, %s) RETURNING id",
+        ("someone-elses-sub-2", "other2@example.com")).fetchone()[0]
+    other_conv = db_conn.execute(
+        "INSERT INTO conversations (user_id, title) VALUES (%s, 'x') RETURNING id",
+        (other,)).fetchone()[0]
+
+    try:
+        resp = c.delete(f"/conversations/{other_conv}")
+        assert resp.status_code == 404
+        assert db_conn.execute(
+            "SELECT 1 FROM conversations WHERE id = %s", (other_conv,)).fetchone() is not None
+    finally:
+        db_conn.execute("DELETE FROM users WHERE id = %s", (other,))

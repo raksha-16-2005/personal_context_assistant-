@@ -12,7 +12,9 @@ const TIMEZONES = typeof Intl.supportedValuesOf === 'function'
 
 export default function Settings() {
   const [hasKey, setHasKey] = useState(false)
+  const [hasKey2, setHasKey2] = useState(false)
   const [keyInput, setKeyInput] = useState('')
+  const [key2Input, setKey2Input] = useState('')
   const [saving, setSaving] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [message, setMessage] = useState('')
@@ -20,7 +22,10 @@ export default function Settings() {
   const [savingTimezone, setSavingTimezone] = useState(false)
 
   useEffect(() => {
-    api.geminiKeyStatus().then((r) => setHasKey(r.has_key)).catch(() => {})
+    api.geminiKeyStatus().then((r) => {
+      setHasKey(r.has_key)
+      setHasKey2(r.has_key_2)
+    }).catch(() => {})
     api.me().then((me) => setTimezoneState(me.timezone)).catch(() => {})
   }, [])
 
@@ -41,9 +46,11 @@ export default function Settings() {
     if (!trimmed) return
     setSaving(true)
     try {
-      await api.setGeminiKey(trimmed)
+      await api.setGeminiKey(trimmed, key2Input.trim())
       setKeyInput('')
+      setKey2Input('')
       setHasKey(true)
+      if (key2Input.trim()) setHasKey2(true)
       setMessage('Key saved.')
     } finally {
       setSaving(false)
@@ -53,7 +60,14 @@ export default function Settings() {
   async function removeKey() {
     await api.deleteGeminiKey()
     setHasKey(false)
+    setHasKey2(false)
     setMessage('Key removed.')
+  }
+
+  async function removeKey2() {
+    await api.deleteGeminiKey2()
+    setHasKey2(false)
+    setMessage('Backup key removed.')
   }
 
   async function logout() {
@@ -74,15 +88,23 @@ export default function Settings() {
         <h2>Gemini API key</h2>
         <p className="hint">
           Used only for your own chat requests, encrypted at rest, and never
-          shown again once saved.
+          shown again once saved. An optional backup key is only ever used
+          if every model runs out of quota on the primary one.
         </p>
-        <p>Status: {hasKey ? 'a key is on file' : 'no key saved yet'}</p>
+        <p>Primary: {hasKey ? 'a key is on file' : 'no key saved yet'}</p>
+        <p>Backup: {hasKey2 ? 'a key is on file' : 'not set'}</p>
         <form onSubmit={saveKey} className="key-form">
           <input
             type="password"
             value={keyInput}
             onChange={(e) => setKeyInput(e.target.value)}
             placeholder="Paste your Gemini API key"
+          />
+          <input
+            type="password"
+            value={key2Input}
+            onChange={(e) => setKey2Input(e.target.value)}
+            placeholder="Backup key (optional)"
           />
           <button type="submit" disabled={saving}>
             Save
@@ -91,6 +113,11 @@ export default function Settings() {
         {hasKey && (
           <button className="link-button" onClick={removeKey}>
             Remove key
+          </button>
+        )}
+        {hasKey2 && (
+          <button className="link-button" onClick={removeKey2}>
+            Remove backup key
           </button>
         )}
         {message && <p className="hint">{message}</p>}

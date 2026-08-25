@@ -60,6 +60,14 @@ export default function Chat() {
 
   const refreshList = () => api.conversations().then(setConversations).catch(() => {})
 
+  async function removeConversation(id, e) {
+    e.stopPropagation()          // don't also trigger the row's own onClick (setActiveId)
+    if (!window.confirm('Delete this conversation? This cannot be undone.')) return
+    await api.deleteConversation(id)
+    if (id === activeId) setActiveId(null)
+    refreshList()
+  }
+
   useEffect(() => {
     refreshList()
   }, [])
@@ -103,13 +111,21 @@ export default function Chat() {
           + New conversation
         </button>
         {conversations.map((c) => (
-          <button
+          <div
             key={c.id}
             className={`conversation-item ${c.id === activeId ? 'active' : ''}`}
             onClick={() => setActiveId(c.id)}
           >
-            {c.title || 'Untitled'}
-          </button>
+            <span className="conversation-title">{c.title || 'Untitled'}</span>
+            <button
+              type="button"
+              className="conversation-delete"
+              title="Delete conversation"
+              onClick={(e) => removeConversation(c.id, e)}
+            >
+              &times;
+            </button>
+          </div>
         ))}
       </aside>
       <section className="chat-panel">

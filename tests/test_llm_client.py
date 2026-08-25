@@ -195,6 +195,71 @@ def test_pinning_a_model_disables_rotation(monkeypatch):
     assert tried == ["gemini-3.5-flash"]
 
 
+def test_a_second_key_is_tried_once_the_first_is_exhausted_on_every_model(monkeypatch):
+    # Gemini quota is per key too, not just per model - a key exhausted on
+    # every model it was tried under is worth nothing further, but a second
+    # key has its own separate quota and deserves the same full model list.
+    import io
+
+    from emailrag.llm import client as C
+
+    tried = []
+
+    def fake_urlopen(req, timeout=None):
+        key = req.full_url.split("key=")[1]
+        model = req.full_url.split("/models/")[1].split(":")[0]
+        tried.append((key, model))
+        if key == "key-1":
+            raise _quota_error(req)
+        return _ctx(io.BytesIO(
+            b'{"candidates":[{"content":{"parts":[{"text":"recovered"}]}}]}'))
+
+    monkeypatch.setattr(C.urllib.request, "urlopen", fake_urlopen)
+
+    llm = LLM("gemini", api_key=["key-1", "key-2"])
+    assert llm.complete("hi") == "recovered"
+
+    # Every model tried under key-1 before key-2 was ever touched, and the
+    # first model tried under key-2 (not wherever key-1 left off) is the one
+    # that answered.
+    assert all(k == "key-1" for k, _m in tried[:-1])
+    assert tried[-1] == ("key-2", "gemini-2.5-flash")
+
+
+def test_every_key_exhausted_on_every_model_names_the_key_count(monkeypatch):
+    from emailrag.llm import client as C
+
+    def fake_urlopen(req, timeout=None):
+        raise _quota_error(req)
+
+    monkeypatch.setattr(C.urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(C.QuotaExhausted) as exc:
+        LLM("gemini", api_key=["key-1", "key-2"]).complete("hi")
+
+    assert "across all 2 keys" in str(exc.value)
+
+
+def test_a_falsy_second_key_is_dropped_not_tried(monkeypatch):
+    # The web app passes [primary, backup_or_none] straight through - a user
+    # with no second key saved should behave exactly like a single-key LLM,
+    # not attempt a request with an empty key.
+    from emailrag.llm import client as C
+
+    tried = []
+
+    def fake_urlopen(req, timeout=None):
+        tried.append(req.full_url.split("key=")[1])
+        raise _quota_error(req)
+
+    monkeypatch.setattr(C.urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(C.QuotaExhausted):
+        LLM("gemini", api_key=["key-1", None, ""]).complete("hi")
+
+    assert set(tried) == {"key-1"}
+
+
 def test_reasoning_budget_is_requested(monkeypatch):
     # Reasoning models otherwise spend the output budget on hidden thinking and
     # truncate structured output mid-JSON.

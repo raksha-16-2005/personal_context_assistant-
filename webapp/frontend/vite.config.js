@@ -8,7 +8,7 @@ import react from '@vitejs/plugin-react'
 // keep in sync, not a dev one and a prod one.
 const API_PREFIXES = [
   '/auth', '/me', '/account', '/chat', '/conversations', '/messages', '/calendar', '/digest',
-  '/healthz',
+  '/healthz', '/sync-status',
 ]
 
 export default defineConfig({

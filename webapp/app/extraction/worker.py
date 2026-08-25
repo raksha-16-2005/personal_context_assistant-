@@ -20,7 +20,7 @@ from emailrag.extraction.extract import CommitmentExtractor
 from emailrag.llm.client import LLM
 
 from ..commitments import generate_calendar_suggestions, insert_commitments
-from ..gemini_keys import load_gemini_key
+from ..gemini_keys import load_gemini_keys
 from ..ingestion.worker import messages_path
 
 # Bounds extraction cost the same way corpus/gmail.py's own since_query()
@@ -38,8 +38,8 @@ def extract_for_user(conn, settings, user_id: str) -> dict:
     never synced - most users will do both before extraction has anything
     to work with, and there is nothing to charge a call to yet.
     """
-    gemini_key = load_gemini_key(conn, user_id, settings.master_key)
-    if not gemini_key:
+    gemini_keys = load_gemini_keys(conn, user_id, settings.master_key)
+    if not gemini_keys:
         return {"skipped": "no gemini key saved"}
 
     msg_path = messages_path(settings.user_index_root, user_id)
@@ -50,7 +50,7 @@ def extract_for_user(conn, settings, user_id: str) -> dict:
     rows = pq.read_table(msg_path).to_pylist()
     recent = [r for r in rows if r.get("date_utc") and r["date_utc"] >= cutoff]
 
-    extractor = CommitmentExtractor(llm=LLM(provider="gemini", api_key=gemini_key))
+    extractor = CommitmentExtractor(llm=LLM(provider="gemini", api_key=gemini_keys))
     found = []
     for row in recent:
         found.extend(extractor.extract(row))

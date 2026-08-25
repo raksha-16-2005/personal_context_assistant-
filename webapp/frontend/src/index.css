@@ -198,6 +198,25 @@ select {
   opacity: 0.7;
 }
 
+.sync-banner {
+  padding: 10px 20px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sync-banner-subtle {
+  background: var(--bg-alt);
+  color: var(--text);
+  opacity: 0.8;
+}
+
+.sync-banner-error {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
 main {
   flex: 1;
   padding: 20px;
@@ -235,16 +254,44 @@ main {
 }
 
 .conversation-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   text-align: left;
   border: none;
   background: none;
   padding: 8px 10px;
   border-radius: 6px;
+  cursor: pointer;
 }
 
 .conversation-item.active {
   background: var(--accent-bg);
   color: var(--accent);
+}
+
+.conversation-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-delete {
+  border: none;
+  background: none;
+  color: inherit;
+  opacity: 0.5;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.conversation-delete:hover {
+  opacity: 1;
+  color: var(--danger);
+  background: var(--danger-bg);
 }
 
 .new-chat {

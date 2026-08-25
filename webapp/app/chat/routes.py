@@ -18,7 +18,7 @@ from ..commitments import load_commitments_for_router
 from ..config import Settings
 from ..db import connect
 from ..deps import get_current_user_id, get_pipeline_pool, get_settings
-from ..gemini_keys import load_gemini_key
+from ..gemini_keys import load_gemini_keys
 from ..pipeline_pool import PipelinePool
 from ..users import get_email, get_timezone
 
@@ -56,8 +56,8 @@ def chat(body: ChatRequest, user_id: str = Depends(get_current_user_id),
             raise HTTPException(
                 409, "your mailbox is still syncing - try again shortly")
 
-        gemini_key = load_gemini_key(conn, user_id, settings.master_key)
-        if not gemini_key:
+        gemini_keys = load_gemini_keys(conn, user_id, settings.master_key)
+        if not gemini_keys:
             raise HTTPException(400, "paste your Gemini API key in settings first")
 
         conversation_id = body.conversation_id
@@ -83,7 +83,7 @@ def chat(body: ChatRequest, user_id: str = Depends(get_current_user_id),
         # this multi-tenant process has no env-var key to find at all - it
         # would silently fail every classification instead of ever really
         # asking a model, rather than fail loudly.
-        llm = LLM(provider="gemini", api_key=gemini_key)
+        llm = LLM(provider="gemini", api_key=gemini_keys)
         pipeline.synthesizer = Synthesizer(llm=llm)
         if pipeline.router is not None:
             pipeline.router._llm = llm
@@ -198,3 +198,16 @@ def get_conversation(conversation_id: str, user_id: str = Depends(get_current_us
     return [{"role": r[0], "content": r[1], "citations": r[2], "refused": r[3],
             "created_at": r[4].isoformat()}
            for r in rows]
+
+
+@router.delete("/conversations/{conversation_id}", status_code=204)
+def delete_conversation(conversation_id: str, user_id: str = Depends(get_current_user_id),
+                        settings: Settings = Depends(get_settings)):
+    with connect(settings.database_url) as conn:
+        # Ownership check first, same as GET - a 404 either way (never
+        # found vs. someone else's) tells a caller nothing about whether the
+        # id belongs to another user.
+        _require_conversation(conn, conversation_id, user_id)
+        # `messages` cascades from `conversations` (schema.sql) - one row
+        # deleted here is the whole conversation gone.
+        conn.execute("DELETE FROM conversations WHERE id = %s", (conversation_id,))

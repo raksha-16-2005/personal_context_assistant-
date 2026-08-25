@@ -37,11 +37,19 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
     issued_at               timestamptz NOT NULL DEFAULT now()
 );
 
+-- `encrypted_key_2` is an optional backup key: LLM.complete (llm/client.py)
+-- tries every model under `encrypted_key` first, and only moves on to
+-- `encrypted_key_2` once every model is quota-exhausted there - a second key
+-- has its own separate free-tier quota, so this is real headroom, not just a
+-- retry.
 CREATE TABLE IF NOT EXISTS gemini_keys (
-    user_id        uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    encrypted_key  bytea NOT NULL,
-    updated_at     timestamptz NOT NULL DEFAULT now()
+    user_id         uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    encrypted_key   bytea NOT NULL,
+    encrypted_key_2 bytea,
+    updated_at      timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE gemini_keys ADD COLUMN IF NOT EXISTS encrypted_key_2 bytea;
 
 -- DB-backed twin of emailrag.corpus.gmail.SyncState - same three fields, one
 -- row per user instead of one local JSON file.

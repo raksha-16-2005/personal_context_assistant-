@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Navigate, NavLink, Route, Routes } from 'react-router-dom'
 import { api } from './api'
+import SyncBanner from './components/SyncBanner'
 import Chat from './pages/Chat'
 import Commitments from './pages/Commitments'
 import Digest from './pages/Digest'
@@ -31,6 +32,7 @@ function Shell({ user, children }) {
         </nav>
         <span className="user-email">{user.email}</span>
       </header>
+      <SyncBanner />
       <main>{children}</main>
     </div>
   )

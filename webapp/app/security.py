@@ -67,6 +67,19 @@ def assert_columns_encrypted(conn, master_key: str) -> None:
             if not looks_encrypted(master_key, bytes(value)):
                 problems.append(f"{table}.{column} for user {user_id} is not "
                                 f"valid ciphertext under MASTER_KEY")
+
+    # Optional (nullable) backup key - a separate query with its own NULL
+    # filter rather than one more entry in the loop above, since every other
+    # column there is NOT NULL and this one needs skip-if-unset instead of a
+    # decrypt attempt on `bytes(None)`.
+    rows = conn.execute(
+        "SELECT user_id, encrypted_key_2 FROM gemini_keys WHERE encrypted_key_2 IS NOT NULL"
+    ).fetchall()
+    for user_id, value in rows:
+        if not looks_encrypted(master_key, bytes(value)):
+            problems.append(f"gemini_keys.encrypted_key_2 for user {user_id} is not "
+                            f"valid ciphertext under MASTER_KEY")
+
     if problems:
         raise RuntimeError(
             "refusing to start: plaintext secret(s) found in the database:\n  "

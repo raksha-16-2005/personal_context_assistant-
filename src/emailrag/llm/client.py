@@ -158,7 +158,7 @@ class LLM:
     def __init__(self, provider: str = DEFAULT, model: str | None = None,
                  temperature: float = 0.0, auto_fallback: bool = True,
                  cache: ResponseCache | None = None, use_cache: bool = True,
-                 api_key: str | None = None) -> None:
+                 api_key: str | list[str] | None = None) -> None:
         if provider not in PROVIDERS:
             raise LLMError(f"unknown provider {provider!r}; have {sorted(PROVIDERS)}")
         self.spec = PROVIDERS[provider]
@@ -186,9 +186,23 @@ class LLM:
         # An explicit key (e.g. a user's own pasted Gemini key in the web app)
         # always wins over the environment. Falling back to the env var keeps
         # every existing caller - eval scripts, the judge, the router - working
-        # unchanged, since none of them pass `api_key`.
+        # unchanged, since none of them pass `api_key`. A list means "try
+        # these in order" - a second key for the web app's own quota-exhausted
+        # fallback (see _complete_uncached) - a bare string is still the
+        # common one-key case.
         env_key = os.environ.get(self.spec.env_var, "") if self.spec.env_var else ""
-        self.key = api_key or env_key
+        if isinstance(api_key, list):
+            self.keys = [k for k in api_key if k]
+        elif api_key:
+            self.keys = [api_key]
+        elif env_key:
+            self.keys = [env_key]
+        else:
+            # Always at least one entry, even if empty - a provider with no
+            # env_var (ollama) needs no key at all, and _complete_uncached's
+            # `for key in self.keys` loop must still run once for it.
+            self.keys = [""]
+        self.key = self.keys[0]
         if self.spec.env_var and not self.key:
             raise MissingKey(
                 f"{self.spec.env_var} is not set.\n"
@@ -243,25 +257,40 @@ class LLM:
         return response
 
     def _complete_uncached(self, prompt: str, system: str, max_tokens: int) -> str:
+        """Tries every model this call would accept (self.model, then
+        self._fallbacks) under the first key; if every model is quota-
+        exhausted there, moves to the next key and tries the same model list
+        again - a second key has its own separate quota, so a model already
+        exhausted under key 1 is worth retrying under key 2. Quota tracking
+        (`self._exhausted`) resets between keys for exactly that reason.
+        """
         fn = getattr(self, f"_{self.spec.name}")
-        try:
-            return fn(prompt, system, max_tokens)
-        except QuotaExhausted:
-            self._exhausted.add(self.model)
-            for candidate in self._fallbacks:
-                if candidate in self._exhausted:
-                    continue
-                self.model = candidate
-                try:
-                    return fn(prompt, system, max_tokens)
-                except QuotaExhausted:
-                    self._exhausted.add(candidate)
-            raise QuotaExhausted(
-                f"free-tier quota exhausted on every model tried: "
-                f"{sorted(self._exhausted)}.\n"
-                f"  Gemini resets daily. Options: wait, use a different key, "
-                f"or --provider groq."
-            ) from None
+        original_model = self.model
+        for key_index, key in enumerate(self.keys):
+            self.key = key
+            self.model = original_model
+            self._exhausted.clear()
+            try:
+                return fn(prompt, system, max_tokens)
+            except QuotaExhausted:
+                self._exhausted.add(self.model)
+                for candidate in self._fallbacks:
+                    if candidate in self._exhausted:
+                        continue
+                    self.model = candidate
+                    try:
+                        return fn(prompt, system, max_tokens)
+                    except QuotaExhausted:
+                        self._exhausted.add(candidate)
+                if key_index == len(self.keys) - 1:
+                    raise QuotaExhausted(
+                        f"free-tier quota exhausted on every model tried: "
+                        f"{sorted(self._exhausted)}"
+                        + (f" (across all {len(self.keys)} keys)."
+                           if len(self.keys) > 1 else ".") +
+                        f"\n  Gemini resets daily. Options: wait, use a "
+                        f"different key, or --provider groq."
+                    ) from None
 
     def json_complete(self, prompt: str, system: str = "", max_tokens: int = 2048,
                       variant: str = "") -> object:

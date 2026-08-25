@@ -69,6 +69,40 @@ def test_updating_the_timezone_is_reflected_in_me(client):
     assert c.get("/me").json()["timezone"] == "Asia/Kolkata"
 
 
+def test_sync_status_with_no_row_yet_reads_as_pending(client):
+    c, _, _, _ = client
+    resp = c.get("/sync-status")
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "status": "pending", "messages_seen": 0, "full_history_synced": False,
+        "error_detail": "", "eta_seconds": 60,
+    }
+
+
+def test_sync_status_reflects_sync_state_and_zeroes_eta_once_ready(client, db_conn):
+    c, user_id, _, _ = client
+    db_conn.execute(
+        "INSERT INTO sync_state (user_id, status, messages_seen) VALUES (%s, 'syncing', 3)",
+        (user_id,))
+    assert c.get("/sync-status").json()["eta_seconds"] == 60
+
+    db_conn.execute(
+        "UPDATE sync_state SET status = 'ready', messages_seen = 9 WHERE user_id = %s",
+        (user_id,))
+    resp = c.get("/sync-status").json()
+    assert resp["status"] == "ready"
+    assert resp["messages_seen"] == 9
+    assert resp["eta_seconds"] == 0
+
+
+def test_sync_status_surfaces_error_detail(client, db_conn):
+    c, user_id, _, _ = client
+    db_conn.execute(
+        "INSERT INTO sync_state (user_id, status, error_detail) "
+        "VALUES (%s, 'error', 'refresh token revoked')", (user_id,))
+    assert c.get("/sync-status").json()["error_detail"] == "refresh token revoked"
+
+
 def test_an_unresolvable_timezone_is_rejected(client, db_conn):
     c, user_id, _, _ = client
     resp = c.put("/account/timezone", json={"timezone": "Mars/Olympus_Mons"})
@@ -84,7 +118,7 @@ def test_an_unresolvable_timezone_is_rejected(client, db_conn):
 def test_gemini_key_status_starts_false(client):
     c, _, _, _ = client
     resp = c.get("/account/gemini-key")
-    assert resp.json() == {"has_key": False}
+    assert resp.json() == {"has_key": False, "has_key_2": False}
 
 
 def test_setting_the_gemini_key_flips_status_and_never_echoes_the_key(client, db_conn):
@@ -94,11 +128,49 @@ def test_setting_the_gemini_key_flips_status_and_never_echoes_the_key(client, db
     assert "a-secret-key" not in resp.text
 
     status = c.get("/account/gemini-key")
-    assert status.json() == {"has_key": True}
+    assert status.json() == {"has_key": True, "has_key_2": False}
 
     row = db_conn.execute(
         "SELECT encrypted_key FROM gemini_keys WHERE user_id = %s", (user_id,)).fetchone()
     assert b"a-secret-key" not in bytes(row[0])
+
+
+def test_a_second_gemini_key_is_optional_and_flips_its_own_status(client, db_conn):
+    c, user_id, _, _ = client
+    c.put("/account/gemini-key", json={"api_key": "primary-key"})
+    assert c.get("/account/gemini-key").json() == {"has_key": True, "has_key_2": False}
+
+    resp = c.put("/account/gemini-key",
+                 json={"api_key": "primary-key", "api_key_2": "backup-key"})
+    assert resp.status_code == 204
+    assert "backup-key" not in resp.text
+    assert c.get("/account/gemini-key").json() == {"has_key": True, "has_key_2": True}
+
+    row = db_conn.execute(
+        "SELECT encrypted_key_2 FROM gemini_keys WHERE user_id = %s", (user_id,)).fetchone()
+    assert b"backup-key" not in bytes(row[0])
+
+
+def test_saving_without_a_second_key_leaves_an_existing_backup_key_alone(client):
+    c, _, _, _ = client
+    c.put("/account/gemini-key", json={"api_key": "primary-key", "api_key_2": "backup-key"})
+    assert c.get("/account/gemini-key").json() == {"has_key": True, "has_key_2": True}
+
+    # Re-saving just the primary (the common "I rotated my key" case) must
+    # not silently wipe the backup - there's no way to resend a key that
+    # was never echoed back in the first place.
+    resp = c.put("/account/gemini-key", json={"api_key": "new-primary-key"})
+    assert resp.status_code == 204
+    assert c.get("/account/gemini-key").json() == {"has_key": True, "has_key_2": True}
+
+
+def test_deleting_the_second_key_leaves_the_primary_alone(client):
+    c, _, _, _ = client
+    c.put("/account/gemini-key", json={"api_key": "primary-key", "api_key_2": "backup-key"})
+
+    resp = c.delete("/account/gemini-key-2")
+    assert resp.status_code == 204
+    assert c.get("/account/gemini-key").json() == {"has_key": True, "has_key_2": False}
 
 
 def test_setting_the_gemini_key_enqueues_extraction(client, db_conn):
@@ -118,7 +190,7 @@ def test_deleting_the_gemini_key_flips_status_back(client):
     c.put("/account/gemini-key", json={"api_key": "a-secret-key"})
     resp = c.delete("/account/gemini-key")
     assert resp.status_code == 204
-    assert c.get("/account/gemini-key").json() == {"has_key": False}
+    assert c.get("/account/gemini-key").json() == {"has_key": False, "has_key_2": False}
 
 
 def test_delete_account_removes_the_user_row_and_cascades(client, db_conn):

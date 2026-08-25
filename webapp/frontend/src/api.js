@@ -34,14 +34,26 @@ export const api = {
   deleteAccount: () => request('/account', { method: 'DELETE' }),
 
   geminiKeyStatus: () => request('/account/gemini-key'),
-  setGeminiKey: (apiKey) =>
-    request('/account/gemini-key', { method: 'PUT', body: JSON.stringify({ api_key: apiKey }) }),
+  // apiKey2 is optional - a backup key only used once every model is
+  // quota-exhausted under apiKey (see llm/client.py's key-rotation).
+  // Leaving it blank means "don't change the saved backup key", not "clear
+  // it" - a key is never echoed back once saved, so a save that only means
+  // to update the primary has no way to resend one it never had. Use
+  // deleteGeminiKey2 to actually clear a saved backup key.
+  setGeminiKey: (apiKey, apiKey2 = '') =>
+    request('/account/gemini-key', {
+      method: 'PUT',
+      body: JSON.stringify({ api_key: apiKey, api_key_2: apiKey2 || null }),
+    }),
   deleteGeminiKey: () => request('/account/gemini-key', { method: 'DELETE' }),
+  deleteGeminiKey2: () => request('/account/gemini-key-2', { method: 'DELETE' }),
   setTimezone: (timezone) =>
     request('/account/timezone', { method: 'PUT', body: JSON.stringify({ timezone }) }),
+  syncStatus: () => request('/sync-status'),
 
   conversations: () => request('/conversations'),
   conversation: (id) => request(`/conversations/${id}`),
+  deleteConversation: (id) => request(`/conversations/${id}`, { method: 'DELETE' }),
   chat: (question, conversationId) =>
     request('/chat', {
       method: 'POST',
