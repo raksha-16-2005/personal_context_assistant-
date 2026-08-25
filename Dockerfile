@@ -47,7 +47,9 @@ COPY --from=frontend /frontend/dist/ ./webapp/frontend/dist/
 WORKDIR /app/webapp
 EXPOSE 8000
 
-# Overridden per process group in fly.toml ([processes].app / .worker) -
-# this default is only what runs if the image is started with no override,
-# e.g. `docker run` for a local smoke test.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Overridden by fly.toml's [processes].app, which hardcodes :8000 to match
+# that file's own [http_service].internal_port. Shell form (not the usual
+# JSON-array CMD) so ${PORT:-8000} actually expands - Render's Docker web
+# services require binding to the PORT they inject at runtime (default
+# 10000), which Fly and a local `docker run` never set, hence the fallback.
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}

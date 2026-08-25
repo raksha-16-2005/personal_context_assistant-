@@ -76,12 +76,21 @@ class PipelinePool:
         self._shared_model()
         self._shared_reranker()
 
-    def get(self, user_id: str) -> Pipeline:
+    def get(self, user_id: str, conn=None) -> Pipeline:
+        """`conn`, if given, is only used to rehydrate this user's index
+        from Postgres (blob_store.download_user_root) when local disk
+        doesn't already have it - a no-op whenever it does, i.e. every
+        deployment with a persistent volume. See ingestion/blob_store.py."""
         with self._lock:
             cached = self._cache.pop(user_id, None)
             if cached is not None:
                 self._cache[user_id] = cached          # mark most-recently-used
                 return cached
+
+            if conn is not None:
+                from .ingestion.blob_store import download_user_root
+                from .ingestion.worker import user_root
+                download_user_root(conn, user_root(self.index_root, user_id), user_id)
 
             # `commitments=[]` here, not this user's real rows: the router
             # only needs to exist at construction time (this is where it's

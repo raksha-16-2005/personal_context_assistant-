@@ -3,10 +3,12 @@ architecture; this wires the pieces built so far into one FastAPI app.
 """
 from __future__ import annotations
 
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -41,10 +43,36 @@ async def lifespan(app: FastAPI):
     if settings.warm_pipeline_on_startup:
         pool.warm()
     app.state.pipeline_pool = pool
+
+    # The job worker (syncs, extraction, digests) runs as a background
+    # thread in this same process by default rather than a separate
+    # deployment - see jobs/runner.py's own module docstring for why, and
+    # Settings.run_worker_in_process for how to opt back into a standalone
+    # `python -m app.jobs.runner` process instead. Sharing `pool` here is
+    # what lets a completed sync invalidate that user's cached Pipeline
+    # immediately (run_once's own pool.invalidate call).
+    if settings.run_worker_in_process:
+        from .jobs.runner import main_loop
+        threading.Thread(
+            target=main_loop, kwargs={"pool": pool}, daemon=True,
+            name="job-worker").start()
+
     yield
 
 
 app = FastAPI(title="Email RAG - multi-tenant backend", lifespan=lifespan)
+
+# Only matters once the frontend is deployed separately from this backend
+# (see Settings.frontend_base_url) - a same-origin deployment never sends a
+# cross-origin request for the browser to preflight in the first place.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[get_settings().frontend_base_url],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(account_router)

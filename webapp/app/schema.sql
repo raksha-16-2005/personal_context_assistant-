@@ -62,6 +62,17 @@ CREATE TABLE IF NOT EXISTS sync_state (
 
 ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS full_history_synced boolean NOT NULL DEFAULT false;
 
+-- The durable copy of USER_INDEX_ROOT/<user_id>/ for a deployment with no
+-- persistent disk - see app/ingestion/blob_store.py. One tar+gzipped row per
+-- user, ~30-40 MB for a typical mailbox; a deployment with a real volume
+-- never reads or writes this table at all (download is a no-op once local
+-- disk already has the directory).
+CREATE TABLE IF NOT EXISTS user_index_blobs (
+    user_id     uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    data        bytea NOT NULL,
+    updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS conversations (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,

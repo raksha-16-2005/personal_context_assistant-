@@ -1,12 +1,16 @@
 """Poll the job queue and dispatch each claimed job to its handler.
 
-Run as its own process (`python -m app.jobs.runner`), separate from the web
-process that serves /chat - a slow or stuck sync job must never block a live
-request, and a burst of /chat traffic must never starve queued syncs. They
-only share the database and, in production, the same PipelinePool instance
-if wired to one (so a completed sync can invalidate that user's cached
-Pipeline - see main.py for where that wiring belongs once this runs
-alongside the web process rather than as a separate deployment).
+Runs as a background thread inside the same process as the web server (see
+main.py's lifespan) by default - sharing one PipelinePool is what lets a
+completed sync invalidate that user's cached Pipeline immediately
+(`run_once`'s own `pool.invalidate` call below) rather than waiting for the
+LRU cache to evict it or the process to restart. `main_loop`'s `pool`
+parameter is optional and this module is still runnable standalone
+(`python -m app.jobs.runner`, e.g. as Fly's own separate `worker` process
+group) for a deployment that would rather isolate sync/extraction/digest
+work on its own machine - a slow or stuck job there still can't block a live
+/chat request, it just won't invalidate the pool until the next request's
+own cache miss or eviction.
 """
 from __future__ import annotations
 
@@ -68,9 +72,14 @@ def _handle_generate_digest(conn, settings, job: dict) -> dict:
     return generate_digest(conn, settings, job["user_id"])
 
 
-def run_once(conn, settings) -> bool:
+def run_once(conn, settings, pool=None) -> bool:
     """Claim and process at most one job. Returns False if the queue had
-    nothing due - the caller's cue to back off rather than spin."""
+    nothing due - the caller's cue to back off rather than spin.
+
+    `pool` is optional, and unused by anything except the invalidate call
+    below - existing callers (tests, a standalone `main_loop()`) that never
+    pass it keep working exactly as before.
+    """
     job = queue.claim_next(conn)
     if job is None:
         return False
@@ -84,6 +93,9 @@ def run_once(conn, settings) -> bool:
     try:
         handler(conn, settings, job)
         queue.complete(conn, job["id"])
+        if (pool is not None and job["user_id"]
+                and job["type"] in ("initial_sync", "incremental_sync", "backfill_history")):
+            pool.invalidate(job["user_id"])
     except Exception as exc:                                      # noqa: BLE001
         detail = f"{type(exc).__name__}: {exc}"
         queue.fail(conn, job["id"], detail)
@@ -97,7 +109,7 @@ def run_once(conn, settings) -> bool:
     return True
 
 
-def main_loop(poll_interval_seconds: float = 5.0) -> None:
+def main_loop(poll_interval_seconds: float = 5.0, pool=None) -> None:
     from ..config import load_settings
     from ..db import connect
     from ..digest.service import schedule_due_digests
@@ -113,7 +125,7 @@ def main_loop(poll_interval_seconds: float = 5.0) -> None:
             # rate-limits work" design choice.
             schedule_due_digests(conn)
             schedule_due_syncs(conn)
-            if not run_once(conn, settings):
+            if not run_once(conn, settings, pool=pool):
                 time.sleep(poll_interval_seconds)
 
 

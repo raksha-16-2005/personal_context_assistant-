@@ -82,21 +82,25 @@ def callback(code: str = "", state: str = "", error: str = "",
                 (user_id,))
             enqueue(conn, "initial_sync", user_id=user_id)
 
-    response = RedirectResponse(url="/")
+    response = RedirectResponse(url=settings.frontend_base_url)
     # `secure` follows the redirect base URL rather than a separate flag: a
     # cookie marked secure is silently dropped by the browser over plain
     # HTTP, which would otherwise make local dev (http://localhost) log
-    # everyone straight back out after "logging in".
+    # everyone straight back out after "logging in". A cross-site frontend
+    # (settings.cookie_samesite="none") requires secure regardless.
     secure = settings.oauth_redirect_base_url.startswith("https://")
     response.set_cookie(
         COOKIE_NAME, create_session_cookie(settings.session_secret, user_id),
-        httponly=True, secure=secure, samesite="lax", max_age=SESSION_MAX_AGE_SECONDS,
+        httponly=True, secure=secure, samesite=settings.cookie_samesite,
+        max_age=SESSION_MAX_AGE_SECONDS,
     )
     return response
 
 
 @router.post("/logout")
-def logout():
-    response = RedirectResponse(url="/", status_code=303)
-    response.delete_cookie(COOKIE_NAME)
+def logout(settings: Settings = Depends(get_settings)):
+    response = RedirectResponse(url=settings.frontend_base_url, status_code=303)
+    secure = settings.oauth_redirect_base_url.startswith("https://")
+    response.delete_cookie(
+        COOKIE_NAME, secure=secure, samesite=settings.cookie_samesite)
     return response

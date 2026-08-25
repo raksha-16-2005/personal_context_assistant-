@@ -1,6 +1,9 @@
-// Thin fetch wrapper. Relative paths only - the dev server proxies them to
-// FastAPI (vite.config.js) and the built app is served *by* FastAPI in
-// production, so there is never a different origin to configure.
+// Thin fetch wrapper. Paths are relative by default - the dev server proxies
+// them to FastAPI (vite.config.js) and, when this app is served *by* FastAPI
+// itself in production, there is no different origin to configure. Set
+// VITE_API_BASE_URL only when the frontend is deployed separately from the
+// backend (e.g. this app on Vercel, FastAPI on Fly).
+export const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
 
 export class ApiError extends Error {
   constructor(status, detail) {
@@ -10,7 +13,7 @@ export class ApiError extends Error {
 }
 
 async function request(path, options = {}) {
-  const resp = await fetch(path, {
+  const resp = await fetch(`${API_BASE}${path}`, {
     credentials: 'include',
     headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
     ...options,

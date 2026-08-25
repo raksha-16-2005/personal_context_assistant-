@@ -46,6 +46,20 @@ class Settings:
     shipped_chunking: str
     shipped_model: str
     shipped_rerank: str
+    # Where the frontend actually lives, and the session cookie's SameSite.
+    # Only need to differ from these defaults (a same-origin deployment,
+    # this backend serving its own built frontend) when the frontend is
+    # deployed separately (e.g. Vercel) - see load_settings.
+    frontend_base_url: str = ""
+    cookie_samesite: str = "lax"
+
+    def __post_init__(self):
+        # "" (unset, whether via load_settings or a test building Settings
+        # directly) means same-origin: fall back to the backend's own URL
+        # rather than making every caller repeat that default.
+        if not self.frontend_base_url:
+            object.__setattr__(self, "frontend_base_url", self.oauth_redirect_base_url)
+
     # Off in tests (see conftest.py) - real deployments want the embedding
     # model and reranker loaded before the first request, but a test that
     # overrides `get_pipeline_pool` (most of them) never touches the
@@ -53,6 +67,13 @@ class Settings:
     # nothing will ever use. Every `TestClient(app)` construction re-runs
     # the lifespan, so that cost was being paid once per test function.
     warm_pipeline_on_startup: bool = True
+    # Off in tests (see conftest.py), same reasoning as warm_pipeline_on_
+    # startup: every `TestClient(app)` construction re-runs the lifespan, and
+    # a real background thread polling Postgres forever, started fresh per
+    # test, would pile up across a whole test session and race tests that
+    # call jobs/runner.run_once directly. See jobs/runner.py's own docstring
+    # for what this thread is and why it normally belongs here.
+    run_worker_in_process: bool = True
 
     @property
     def oauth_redirect_uri(self) -> str:
@@ -69,6 +90,8 @@ def load_settings() -> Settings:
         gmail_client_secret=_require("GMAIL_CLIENT_SECRET"),
         oauth_redirect_base_url=os.environ.get(
             "OAUTH_REDIRECT_BASE_URL", "http://localhost:8000"),
+        frontend_base_url=os.environ.get("FRONTEND_BASE_URL", ""),
+        cookie_samesite=os.environ.get("SESSION_COOKIE_SAMESITE", "lax"),
         user_index_root=Path(os.environ.get(
             "USER_INDEX_ROOT", str(REPO_ROOT / "data" / "index" / "users"))),
         shipped_chunking=os.environ.get("SHIPPED_CHUNKING", "thread_aware"),
@@ -77,4 +100,6 @@ def load_settings() -> Settings:
         shipped_rerank=os.environ.get("SHIPPED_RERANK", "L2@20/t192"),
         warm_pipeline_on_startup=os.environ.get(
             "WARM_PIPELINE_ON_STARTUP", "true").lower() not in ("false", "0", ""),
+        run_worker_in_process=os.environ.get(
+            "RUN_WORKER_IN_PROCESS", "true").lower() not in ("false", "0", ""),
     )

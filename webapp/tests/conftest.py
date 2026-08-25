@@ -27,6 +27,10 @@ os.environ.setdefault("GMAIL_CLIENT_SECRET", "test-client-secret")
 # app/config.py's Settings.warm_pipeline_on_startup for the real-deployment
 # side of this.
 os.environ.setdefault("WARM_PIPELINE_ON_STARTUP", "false")
+# Same reasoning: a real background thread polling Postgres forever, started
+# fresh by every TestClient(app) construction, would pile up across the test
+# session and race tests that call jobs/runner.run_once directly.
+os.environ.setdefault("RUN_WORKER_IN_PROCESS", "false")
 
 from app.db import connect, init_schema
 

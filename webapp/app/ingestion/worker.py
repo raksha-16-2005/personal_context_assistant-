@@ -26,6 +26,12 @@ Everything for one user lives under `<USER_INDEX_ROOT>/<user_id>/`:
     index/             bm25/, dense/, chunks.jsonl, config.json - exactly the
                        shape scripts/build_index.py produces, so `Pipeline`
                        opens a user's index with zero code changes.
+
+On a deployment with no persistent disk, this whole directory is only a
+cache: blob_store.download_user_root() recreates it from Postgres before
+this module reads any of it, and upload_user_root() saves a fresh copy
+there right after each rebuild. A deployment with a real volume never
+notices - download is a no-op once the directory already exists.
 """
 from __future__ import annotations
 
@@ -46,6 +52,7 @@ from emailrag.index.dense import DenseIndex
 from emailrag.index.sparse import SparseIndex
 
 from ..tokens.store import DbTokenStore
+from .blob_store import download_user_root, upload_user_root
 
 # Per-sync-job thread budget. Lower than build_index.py's single-tenant
 # default (6): this runs on a box that also serves live /chat traffic and,
@@ -256,6 +263,13 @@ def sync_user(conn, settings, user_id: str, shared_model=None, query: str = "") 
 
     conn.execute("UPDATE sync_state SET status = 'syncing' WHERE user_id = %s", (user_id,))
 
+    # Only actually reads from Postgres when local disk doesn't already have
+    # this user (see blob_store's own docstring) - a deployment with a
+    # persistent volume never triggers it at all, since `root.exists()` is
+    # already true. Without this, a wiped-disk incremental sync would read
+    # zero existing dedup keys and treat every message as new.
+    download_user_root(conn, user_root(settings.user_index_root, user_id), user_id)
+
     existing_keys = _read_existing_dedup_keys(msg_path)
     existing_bulk_keys = _read_existing_dedup_keys(bulk_path)
     raw_messages, gmail_state = G.sync(client, state_path, query=query)
@@ -285,6 +299,7 @@ def sync_user(conn, settings, user_id: str, shared_model=None, query: str = "") 
     meta = _rebuild_index(merged, index_dir(settings.user_index_root, user_id),
                           settings.shipped_chunking, settings.shipped_model,
                           shared_model=shared_model)
+    upload_user_root(conn, user_root(settings.user_index_root, user_id), user_id)
 
     conn.execute(
         "UPDATE sync_state SET status = 'ready', history_id = %s, "
@@ -317,6 +332,7 @@ def backfill_history(conn, settings, user_id: str, shared_model=None) -> dict:
 
     msg_path = messages_path(settings.user_index_root, user_id)
     bulk_path = bulk_messages_path(settings.user_index_root, user_id)
+    download_user_root(conn, user_root(settings.user_index_root, user_id), user_id)
     existing_keys = _read_existing_dedup_keys(msg_path)
     existing_bulk_keys = _read_existing_dedup_keys(bulk_path)
 
@@ -335,6 +351,7 @@ def backfill_history(conn, settings, user_id: str, shared_model=None) -> dict:
     meta = _rebuild_index(merged, index_dir(settings.user_index_root, user_id),
                           settings.shipped_chunking, settings.shipped_model,
                           shared_model=shared_model)
+    upload_user_root(conn, user_root(settings.user_index_root, user_id), user_id)
 
     conn.execute(
         "UPDATE sync_state SET full_history_synced = true WHERE user_id = %s", (user_id,))

@@ -13,13 +13,24 @@ primary_region = "iad"
   SHIPPED_CHUNKING = "thread_aware"
   SHIPPED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
   SHIPPED_RERANK = "L2@20/t192"
+  # Only needed if the frontend is deployed separately (e.g. Vercel) rather
+  # than served by this backend - see DEPLOY.md's "Splitting the frontend
+  # onto Vercel" section. Uncomment and fill in after the Vercel deploy:
+  # FRONTEND_BASE_URL = "https://REPLACE-ME.vercel.app"
+  # SESSION_COOKIE_SAMESITE = "none"
 
 # DATABASE_URL, MASTER_KEY, SESSION_SECRET, GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET
 # are secrets, not [env] - see DEPLOY.md, set via `fly secrets set`.
 
 [processes]
+  # The job worker (syncs, extraction, digests) runs as a background thread
+  # inside this same process by default (Settings.run_worker_in_process,
+  # webapp/app/jobs/runner.py's own docstring) - no separate process group
+  # needed here anymore. Set RUN_WORKER_IN_PROCESS=false above and add back
+  # `worker = "python -m app.jobs.runner"` here (plus it to [[vm]]'s
+  # `processes` and `fly scale count worker=1`) to isolate it on its own
+  # machine instead.
   app = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
-  worker = "python -m app.jobs.runner"
 
 # Runs once before each deploy's new machines start serving traffic; a
 # non-zero exit blocks the rollout - see webapp/app/security.py's own
@@ -42,4 +53,4 @@ release_command = "python -m app.security"
 [[vm]]
   size = "shared-cpu-1x"
   memory = "2gb"
-  processes = ["app", "worker"]
+  processes = ["app"]

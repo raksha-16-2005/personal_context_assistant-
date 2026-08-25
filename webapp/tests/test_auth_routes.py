@@ -110,7 +110,7 @@ def test_callback_creates_a_user_stores_tokens_and_queues_the_first_sync(client,
         resp = c.get("/auth/google/callback", params={"code": "abc", "state": state})
 
         assert resp.status_code in (302, 307)
-        assert resp.headers["location"] == "/"
+        assert resp.headers["location"] == settings.frontend_base_url
         set_cookie = resp.headers.get("set-cookie", "")
         assert "emailrag_session=" in set_cookie
         assert "HttpOnly" in set_cookie

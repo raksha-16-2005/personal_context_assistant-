@@ -158,7 +158,10 @@ row you've inserted yourself, then setting it as the `emailrag_session`
 cookie. That's how this app's own frontend was verified end to end before
 any real OAuth credentials existed.
 
-Run the ingestion job queue in a second process once there's something in it:
+The ingestion job queue (syncs, extraction, digests) runs as a background
+thread inside `uvicorn app.main:app` itself by default - nothing extra to
+run. Set `RUN_WORKER_IN_PROCESS=false` and run it as its own process instead
+if you want a slow/stuck job isolated from `/chat` traffic:
 
 ```bash
 python -m app.jobs.runner

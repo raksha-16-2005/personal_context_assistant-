@@ -74,7 +74,7 @@ def chat(body: ChatRequest, user_id: str = Depends(get_current_user_id),
             "VALUES (%s, 'user', %s)",
             (conversation_id, body.question))
 
-        pipeline = pool.get(user_id)
+        pipeline = pool.get(user_id, conn=conn)
         # One LLM, this user's own, shared by both consumers that need one -
         # swapped in per request rather than baked into the cached Pipeline,
         # since this user's key may have changed since their last question.
